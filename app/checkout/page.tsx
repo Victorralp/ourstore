@@ -511,6 +511,11 @@ export default function CheckoutPage() {
                             stateChosenByCustomer.current = true
                             handleShippingChange("state", value)
                           }}
+                          // Re-picking the current state fires no onValueChange, so treat
+                          // opening the list as the customer choosing
+                          onOpenChange={(open) => {
+                            if (open) stateChosenByCustomer.current = true
+                          }}
                         >
                           <SelectTrigger>
                             <SelectValue placeholder="Select a state" />
