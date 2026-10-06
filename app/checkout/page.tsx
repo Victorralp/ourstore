@@ -1,6 +1,6 @@
 "use client"
 
-import React, { useState, useEffect } from "react"
+import React, { useState, useEffect, useRef } from "react"
 import { useRouter } from "next/navigation"
 import Image from "next/image"
 import { Button } from "@/components/ui/button"
@@ -65,7 +65,7 @@ export default function CheckoutPage() {
   const { items, getTotalPrice, clearCart } = useCart()
   // We will override formatting to NGN on this page
   const formatPrice = (amount: number) => formatNaira(amount)
-  const { user } = useAuth()
+  const { user, profile, isLoading: authLoading } = useAuth()
   const { toast } = useToast()
 
   const [step, setStep] = useState(1)
@@ -91,17 +91,32 @@ export default function CheckoutPage() {
     country: "Nigeria",
   })
 
-  // Populate shipping info from authenticated user after mount to avoid SSR/CSR mismatch
+  // Prefill shipping info once per account after mount (avoids an SSR/CSR mismatch):
+  // the default saved address first, then the account's name, email and phone.
+  // Only empty fields are filled, so nothing the customer typed is overwritten.
+  const prefilledFor = useRef<string | null>(null)
+  const [prefilledFromAddress, setPrefilledFromAddress] = useState(false)
   useEffect(() => {
-    if (user) {
-      setShippingInfo((prev) => ({
-        ...prev,
-        firstName: user.displayName ? user.displayName.split(" ")[0] || "" : prev.firstName,
-        lastName: user.displayName ? user.displayName.split(" ")[1] || "" : prev.lastName,
-        email: user.email || prev.email,
-      }))
-    }
-  }, [user])
+    // Wait for the profile to load so the default address isn't missed
+    if (!user || authLoading || prefilledFor.current === user.uid) return
+    prefilledFor.current = user.uid
+
+    const userProfile = profile?.uid === user.uid ? profile : null
+    const defaultAddress = userProfile?.savedAddresses?.find((address) => address.isDefault)
+    const [firstName = "", ...otherNames] = (defaultAddress?.name || user.displayName || "").split(" ")
+
+    setShippingInfo((prev) => ({
+      ...prev,
+      firstName: prev.firstName || firstName,
+      lastName: prev.lastName || otherNames.join(" "),
+      email: prev.email || user.email || "",
+      phone: prev.phone || userProfile?.phone || "",
+      address: prev.address || defaultAddress?.address || "",
+      city: prev.city || defaultAddress?.city || "",
+      postalCode: prev.postalCode || defaultAddress?.postalCode || "",
+    }))
+    setPrefilledFromAddress(!!defaultAddress)
+  }, [user, profile, authLoading])
   const [paymentInfo, setPaymentInfo] = useState({
     cardNumber: "",
     expiryDate: "",
@@ -379,6 +394,12 @@ export default function CheckoutPage() {
                       <Truck className="h-5 w-5" />
                       Shipping Information
                     </CardTitle>
+                    {prefilledFromAddress && (
+                      <p className="text-sm text-muted-foreground">
+                        Filled in from your default saved address. You can change anything below, or{" "}
+                        <Link href="/profile" className="underline">manage your addresses</Link>.
+                      </p>
+                    )}
                   </CardHeader>
                   <CardContent className="space-y-4">
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
