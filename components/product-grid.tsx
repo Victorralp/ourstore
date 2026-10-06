@@ -3,13 +3,12 @@
 import { useState, useEffect } from "react"
 import Image from "next/image"
 import Link from "next/link"
-import { isOutOfStock, unitsLeftToAdd } from "@/lib/product-stock"
-import { useToast } from "@/hooks/use-toast"
+import { isOutOfStock } from "@/lib/product-stock"
+import { useStockAwareAddToCart } from "@/hooks/use-stock-aware-add-to-cart"
 import { Card, CardContent, CardFooter } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Star, Eye, ShoppingCart, Heart, X, User } from "lucide-react"
-import { useCart } from "@/components/cart-provider"
 import { formatCurrency } from "@/lib/utils"
 import { useWishlist, type WishlistItem } from "@/hooks/use-wishlist"
 import ProductDetailModal from "@/components/product-detail-modal"
@@ -24,23 +23,16 @@ export default function ProductGrid({ products, isLoading = false }: ProductGrid
   const [hoveredProductId, setHoveredProductId] = useState<string | null>(null);
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const { addToCart, getCartItem } = useCart();
-  const { toast } = useToast();
+  const addToCartWithinStock = useStockAwareAddToCart();
   const { toggleWishlist, isInWishlist } = useWishlist();
 
   const handleAddToCart = (product: Product, e?: React.MouseEvent) => {
     if (e) e.preventDefault();
-    if (isOutOfStock(product as any)) return;
-    // Don't let the cart hold more than are in stock
-    if (unitsLeftToAdd(product as any, getCartItem(product.id)?.quantity ?? 0) < 1) {
-      toast({ title: "No more in stock", description: `All available units of ${product.name} are already in your cart.` });
-      return;
-    }
     
     const discount = (product as any).discount || 0;
     const finalPrice = discount > 0 ? product.price * (1 - discount / 100) : product.price;
     
-    addToCart({
+    addToCartWithinStock(product as any, {
       productId: product.id,
       name: product.name,
       price: finalPrice,
