@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import Image from "next/image"
 import Link from "next/link"
 import { Button } from "@/components/ui/button"
@@ -32,18 +32,30 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
 
 export default function ProfilePage() {
-  const { user, logout } = useAuth()
+  const { user, profile, logout } = useAuth()
   const { formatPrice } = useCurrency()
   const { toast } = useToast()
+  const fullName = profile?.name || user?.displayName || ""
   const [isEditing, setIsEditing] = useState(false)
   const [profileData, setProfileData] = useState({
-    firstName: user?.name?.split(" ")[0] || "",
-    lastName: user?.name?.split(" ")[1] || "",
+    firstName: fullName.split(" ")[0] || "",
+    lastName: fullName.split(" ").slice(1).join(" "),
     email: user?.email || "",
     phone: "",
     dateOfBirth: "",
     gender: "",
   })
+
+  // Auth usually resolves after the first render, so fill in any blank fields once it does
+  useEffect(() => {
+    if (!fullName && !user?.email) return
+    setProfileData((prev) => ({
+      ...prev,
+      firstName: prev.firstName || fullName.split(" ")[0] || "",
+      lastName: prev.lastName || fullName.split(" ").slice(1).join(" "),
+      email: prev.email || user?.email || "",
+    }))
+  }, [fullName, user?.email])
   const [addresses, setAddresses] = useState([
     {
       id: 1,
@@ -175,6 +187,17 @@ export default function ProfilePage() {
     })
   }
 
+  const setAddressAsDefault = (id: number) => {
+    setAddresses(addresses.map(address => ({
+      ...address,
+      isDefault: address.id === id
+    })))
+    toast({
+      title: "Default address updated",
+      description: "Your default address has been changed.",
+    })
+  }
+
   const handleSaveAddress = () => {
     // Validate form data
     if (!addressForm.name || !addressForm.address || !addressForm.city || !addressForm.postalCode || !addressForm.country) {
@@ -281,14 +304,15 @@ export default function ProfilePage() {
             <Avatar className="h-16 w-16">
               <AvatarImage src="/placeholder.svg" />
               <AvatarFallback className="text-lg">
-                {user.name
-                  ?.split(" ")
+                {fullName
+                  .split(" ")
+                  .filter(Boolean)
                   .map((n) => n[0])
                   .join("") || "U"}
               </AvatarFallback>
             </Avatar>
             <div>
-              <h1 className="text-3xl font-bold">Welcome back, {user.name?.split(" ")[0]}!</h1>
+              <h1 className="text-3xl font-bold">Welcome back{fullName ? `, ${fullName.split(" ")[0]}` : ""}!</h1>
               <p className="text-muted-foreground">Manage your account and preferences</p>
             </div>
           </div>

@@ -27,7 +27,7 @@ import {
   SelectTrigger, 
   SelectValue 
 } from "@/components/ui/select"
-import { useAuth } from "@/components/auth-provider"
+import { useAdmin } from "@/hooks/use-admin"
 import { useCurrency } from "@/components/currency-provider"
 import { getAllOrders, listenToAllOrders, updateOrder } from "@/lib/firebase-orders"
 import { Order } from "@/types"
@@ -35,7 +35,7 @@ import { useToast } from "@/hooks/use-toast"
 import { RequireAdmin } from "@/components/require-admin"
 
 export default function AdminOrdersPage() {
-  const { user, isAdmin } = useAuth()
+  const { isAdmin, loading: adminLoading } = useAdmin()
   const { formatPrice } = useCurrency()
   const { toast } = useToast()
   
@@ -52,6 +52,8 @@ export default function AdminOrdersPage() {
     let unsubscribe: (() => void) | undefined;
 
     const loadOrders = async () => {
+      if (adminLoading) return
+
       if (!isAdmin) {
         setLoading(false)
         return
@@ -88,7 +90,7 @@ export default function AdminOrdersPage() {
         unsubscribe()
       }
     }
-  }, [isAdmin, toast])
+  }, [isAdmin, adminLoading, toast])
 
   // Filter and sort orders
   const filteredOrders = orders
