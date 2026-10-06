@@ -27,6 +27,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu"
 import { useAuth } from "@/components/auth-provider"
+import { KycBanner } from "@/components/kyc-banner"
 
 const navigation: Array<{
   name: string;
@@ -297,6 +298,7 @@ export default function ServiceProviderLayout({
         {/* Main content area */}
         <main className="flex-1 p-4 md:p-6 bg-gray-50 overflow-auto">
           <div className="max-w-7xl mx-auto">
+            <KycBanner />
             {children}
           </div>
         </main>

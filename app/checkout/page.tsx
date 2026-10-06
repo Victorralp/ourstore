@@ -1,6 +1,6 @@
 "use client"
 
-import React, { useState, useEffect } from "react"
+import React, { useState, useEffect, useRef } from "react"
 import { useRouter } from "next/navigation"
 import Image from "next/image"
 import { Button } from "@/components/ui/button"
@@ -60,54 +60,96 @@ const otherShippingOptions = [
   { id: 'bus-park-delivery', name: 'Bus Park Delivery', price: 1000, description: '' },
 ];
 
+const emptyShippingInfo = {
+  firstName: "",
+  lastName: "",
+  email: "",
+  phone: "",
+  address: "",
+  city: "",
+  state: "Lagos",
+  postalCode: "",
+  country: "Nigeria",
+}
+
+const emptyBillingInfo = {
+  firstName: "",
+  lastName: "",
+  address: "",
+  city: "",
+  state: "Lagos",
+  postalCode: "",
+  country: "Nigeria",
+}
+
+const emptyPaymentInfo = {
+  cardNumber: "",
+  expiryDate: "",
+  cvv: "",
+  nameOnCard: "",
+}
+
 export default function CheckoutPage() {
   const router = useRouter()
   const { items, getTotalPrice, clearCart } = useCart()
   // We will override formatting to NGN on this page
   const formatPrice = (amount: number) => formatNaira(amount)
-  const { user } = useAuth()
+  const { user, profile, isLoading: authLoading } = useAuth()
   const { toast } = useToast()
 
   const [step, setStep] = useState(1)
   const [isProcessing, setIsProcessing] = useState(false)
-  const [shippingInfo, setShippingInfo] = useState({
-    firstName: "",
-    lastName: "",
-    email: "",
-    phone: "",
-    address: "",
-    city: "",
-    state: "Lagos",
-    postalCode: "",
-    country: "Nigeria",
-  })
-  const [billingInfo, setBillingInfo] = useState({
-    firstName: "",
-    lastName: "",
-    address: "",
-    city: "",
-    state: "Lagos",
-    postalCode: "",
-    country: "Nigeria",
-  })
+  const [shippingInfo, setShippingInfo] = useState(emptyShippingInfo)
+  const [billingInfo, setBillingInfo] = useState(emptyBillingInfo)
+  const [paymentInfo, setPaymentInfo] = useState(emptyPaymentInfo)
 
-  // Populate shipping info from authenticated user after mount to avoid SSR/CSR mismatch
+  // Prefill shipping info after mount (avoids an SSR/CSR mismatch): the default saved
+  // address first, then the account's name, email and phone. Only empty fields are
+  // filled, so nothing the customer typed is overwritten.
+  const prefilledFor = useRef<string | null>(null)
+  const profileAppliedFor = useRef<string | null>(null)
+  const [prefilledFromAddress, setPrefilledFromAddress] = useState(false)
   useEffect(() => {
-    if (user) {
-      setShippingInfo((prev) => ({
-        ...prev,
-        firstName: user.displayName ? user.displayName.split(" ")[0] || "" : prev.firstName,
-        lastName: user.displayName ? user.displayName.split(" ")[1] || "" : prev.lastName,
-        email: user.email || prev.email,
-      }))
+    // A different account, or signing out, must never inherit the previous customer's details
+    if (prefilledFor.current && prefilledFor.current !== user?.uid) {
+      setShippingInfo(emptyShippingInfo)
+      setBillingInfo(emptyBillingInfo)
+      setPaymentInfo(emptyPaymentInfo)
+      setPrefilledFromAddress(false)
+      prefilledFor.current = null
+      profileAppliedFor.current = null
     }
-  }, [user])
-  const [paymentInfo, setPaymentInfo] = useState({
-    cardNumber: "",
-    expiryDate: "",
-    cvv: "",
-    nameOnCard: "",
-  })
+
+    // Wait for the profile to load so the default address isn't missed
+    if (!user || authLoading) return
+
+    // Fill once per account, and once more if the profile only arrives later
+    // (e.g. after auth's loading timeout)
+    const userProfile = profile?.uid === user.uid ? profile : null
+    const profileAlreadyApplied = !userProfile || profileAppliedFor.current === user.uid
+    if (prefilledFor.current === user.uid && profileAlreadyApplied) return
+    prefilledFor.current = user.uid
+    if (userProfile) {
+      profileAppliedFor.current = user.uid
+    }
+
+    const defaultAddress = userProfile?.savedAddresses?.find((address) => address.isDefault)
+    const [firstName = "", ...otherNames] = (defaultAddress?.name || user.displayName || "").split(" ")
+
+    setShippingInfo((prev) => ({
+      ...prev,
+      firstName: prev.firstName || firstName,
+      lastName: prev.lastName || otherNames.join(" "),
+      email: prev.email || user.email || "",
+      phone: prev.phone || userProfile?.phone || "",
+      address: prev.address || defaultAddress?.address || "",
+      city: prev.city || defaultAddress?.city || "",
+      postalCode: prev.postalCode || defaultAddress?.postalCode || "",
+    }))
+    if (defaultAddress) {
+      setPrefilledFromAddress(true)
+    }
+  }, [user, profile, authLoading])
   const [deliveryType, setDeliveryType] = useState('lagos');
   const [lagosShippingOptionId, setLagosShippingOptionId] = useState(lagosShippingOptions[0].id);
   const [otherShippingOptionId, setOtherShippingOptionId] = useState(otherShippingOptions[0].id);
@@ -379,6 +421,12 @@ export default function CheckoutPage() {
                       <Truck className="h-5 w-5" />
                       Shipping Information
                     </CardTitle>
+                    {prefilledFromAddress && (
+                      <p className="text-sm text-muted-foreground">
+                        Filled in from your default saved address. You can change anything below, or{" "}
+                        <Link href="/profile" className="underline">manage your addresses</Link>.
+                      </p>
+                    )}
                   </CardHeader>
                   <CardContent className="space-y-4">
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">

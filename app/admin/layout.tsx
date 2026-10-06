@@ -6,7 +6,7 @@ import Link from "next/link"
 import { useAdmin } from "@/hooks/use-admin"
 import { useCountry } from "@/components/country-provider"
 import { useCurrency } from "@/components/currency-provider"
-import { Package, ShoppingBag, Home, Settings, BarChart3, LogOut, Upload, CloudUpload, Users, Wrench } from "lucide-react"
+import { Package, ShoppingBag, Home, Settings, BarChart3, LogOut, Upload, CloudUpload, Users, Wrench, ShieldCheck } from "lucide-react"
 
 export default function AdminLayout({ children }: { children: React.ReactNode }) {
   const { isAdmin, loading } = useAdmin()
@@ -157,6 +157,18 @@ export default function AdminLayout({ children }: { children: React.ReactNode })
           >
             <Wrench className="h-5 w-5" />
             <span>Service Providers</span>
+          </Link>
+
+          <Link 
+            href="/admin/kyc" 
+            className={`flex items-center gap-3 px-3 py-2 rounded-md ${
+              isActive('/admin/kyc') 
+                ? 'bg-green-600 text-white font-medium' 
+                : 'text-gray-700 hover:bg-gray-200'
+            }`}
+          >
+            <ShieldCheck className="h-5 w-5" />
+            <span>Identity Verification</span>
           </Link>
         </nav>
         
