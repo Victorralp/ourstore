@@ -24,8 +24,19 @@ export function useLocalStorage<T>(key: string, initialValue: T) {
   const setValue = useCallback(
     (value: T | ((val: T) => T)) => {
       try {
-        // Allow value to be a function so we have same API as useState
-        const valueToStore = value instanceof Function ? value(storedValue) : value
+        // Allow value to be a function so we have same API as useState. Apply it to
+        // what's stored now, which may include changes made in another tab since
+        // this render.
+        let current = storedValue
+        if (value instanceof Function && typeof window !== "undefined") {
+          try {
+            const item = window.localStorage.getItem(key)
+            if (item) current = JSON.parse(item)
+          } catch {
+            // Fall back to this render's value
+          }
+        }
+        const valueToStore = value instanceof Function ? value(current) : value
 
         // Save state
         setStoredValue(valueToStore)

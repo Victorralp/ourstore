@@ -28,7 +28,7 @@ To re-enable the Stripe integration:
 
 2. Update `app/checkout/page.tsx`:
    - Uncomment the Stripe Checkout import
-   - Restore the Stripe payment flow (see `app/checkout/checkout-page-updates.tsx` for reference)
+   - Restore a Stripe payment flow alongside Paystack (see `docs/PAYMENTS.md` for how payments now work)
 
 3. Restore `app/api/payments/create-intent/route.ts`:
    - Remove the 503 response

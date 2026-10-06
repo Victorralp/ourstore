@@ -2,7 +2,8 @@
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { formatCurrency } from "@/lib/utils"
-import { collection, query, where, getDocs, orderBy, limit } from "firebase/firestore"
+import { collection, query, where, getDocs } from "firebase/firestore"
+import { getStoreOrders } from "@/lib/firebase-vendors"
 import { db } from "@/lib/firebase"
 import { useState, useEffect } from "react"
 import { Package, ShoppingCart, DollarSign } from "lucide-react"
@@ -33,59 +34,19 @@ export function VendorDashboardStats({ storeId }: { storeId: string }) {
 
         // Fetch total orders and sales
         try {
-          // Try with orderBy first
-          const ordersQuery = query(
-            collection(db, "orders"), 
-            where("vendorId", "==", storeId),
-            orderBy("createdAt", "desc")
-          )
-          const ordersSnapshot = await getDocs(ordersQuery)
-          
-          const totalOrders = ordersSnapshot.size
-          let totalSales = 0
-          
-          ordersSnapshot.forEach((doc) => {
-            const orderData = doc.data()
-            totalSales += orderData.total || 0
-          })
-          
+          const { orders, sales } = await getStoreOrders(storeId)
           setStats({
             totalProducts,
-            totalOrders,
-            totalSales
+            totalOrders: orders.length,
+            totalSales: sales
           })
-        } catch (ordersError: any) {
-          console.log("Orders query failed, trying without orderBy:", ordersError.message)
-          
-          // Fallback: query without orderBy to avoid composite index requirement
-          try {
-            const simpleOrdersQuery = query(
-              collection(db, "orders"), 
-              where("vendorId", "==", storeId)
-            )
-            const ordersSnapshot = await getDocs(simpleOrdersQuery)
-            
-            const totalOrders = ordersSnapshot.size
-            let totalSales = 0
-            
-            ordersSnapshot.forEach((doc) => {
-              const orderData = doc.data()
-              totalSales += orderData.total || 0
-            })
-            
-            setStats({
-              totalProducts,
-              totalOrders,
-              totalSales
-            })
-          } catch (fallbackError: any) {
-            console.error("Error fetching order stats:", fallbackError)
-            setStats({
-              totalProducts,
-              totalOrders: 0,
-              totalSales: 0
-            })
-          }
+        } catch (ordersError) {
+          console.error("Error fetching order stats:", ordersError)
+          setStats({
+            totalProducts,
+            totalOrders: 0,
+            totalSales: 0
+          })
         }
       } catch (error) {
         console.error("Failed to fetch vendor stats:", error)

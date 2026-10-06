@@ -104,24 +104,12 @@ export default function VendorStoresPage() {
 
     try {
       // Fetch products for this store
-      const { getVendorProducts } = await import("@/lib/firebase-vendors")
-      const { collection, query, where, getDocs } = await import("firebase/firestore")
-      const { db } = await import("@/lib/firebase")
+      const { getVendorProducts, getStoreOrders } = await import("@/lib/firebase-vendors")
       
       const products = await getVendorProducts(storeId)
       
-      // Fetch orders for this store
-      const ordersQuery = query(
-        collection(db, "orders"), 
-        where("vendorId", "==", storeId)
-      )
-      const ordersSnapshot = await getDocs(ordersQuery)
-      const orders = ordersSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }))
-      
-      // Calculate revenue from orders
-      const revenue = orders.reduce((total, order: any) => {
-        return total + (order.total || 0)
-      }, 0)
+      // Fetch orders for this store, and its sales from them
+      const { orders, sales: revenue } = await getStoreOrders(storeId)
       
       // Mock views for now (you can implement analytics later)
       const views = Math.floor(Math.random() * 1000) + 100

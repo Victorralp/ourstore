@@ -25,6 +25,9 @@ export const otherShippingOptions = [
 
 export type DeliveryType = "lagos" | "other"
 
+// The one option that ships outside Nigeria; every other option needs a Nigerian address
+export const INTERNATIONAL_OPTION_ID = 'international-delivery'
+
 // VAT charged on the subtotal
 export const VAT_RATE = 0.025
 

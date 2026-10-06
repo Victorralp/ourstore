@@ -30,6 +30,7 @@ import {
   SelectValue 
 } from "@/components/ui/select"
 import { useAdmin } from "@/hooks/use-admin"
+import { fulfilmentBlockedReason } from "@/lib/order-fulfilment"
 import { useCurrency } from "@/components/currency-provider"
 import { getOrdersBefore, listenToAllOrders, updateOrder, type Order } from "@/lib/firebase-orders"
 import { useToast } from "@/hooks/use-toast"
@@ -275,6 +276,8 @@ export default function AdminOrdersPage() {
         return "bg-purple-100 text-purple-800";
       case 'failed':
         return "bg-red-100 text-red-800";
+      case 'abandoned':
+        return "bg-gray-100 text-gray-600";
       default:
         return "bg-yellow-100 text-yellow-800";
     }
@@ -293,6 +296,14 @@ export default function AdminOrdersPage() {
 
   // Function to update order status
   const handleStatusUpdate = async (orderId: string, newStatus: Order["status"]) => {
+    // Only paid orders that don't need a refund can be fulfilled; cancelling is always allowed
+    const order = orders.find((o) => o.id === orderId)
+    const blocked = order ? fulfilmentBlockedReason(order, newStatus) : null
+    if (blocked) {
+      toast({ title: "Can't update this order", description: blocked, variant: "destructive" });
+      return;
+    }
+
     setUpdating(orderId);
     try {
       const updates = {
@@ -478,6 +489,11 @@ export default function AdminOrdersPage() {
                           {order.paymentStatus.charAt(0).toUpperCase() + order.paymentStatus.slice(1)}
                         </Badge>
                       )}
+                      {order.needsRefund && (
+                        <Badge variant="secondary" className="bg-red-100 text-red-800">
+                          Refund needed
+                        </Badge>
+                      )}
                       <span className="font-medium">{formatPrice(order.total)}</span>
                     </div>
                   </div>
@@ -543,7 +559,7 @@ export default function AdminOrdersPage() {
                           <Button 
                             size="sm" 
                             variant="outline"
-                            disabled={updating === order.id} 
+                            disabled={updating === order.id || !!fulfilmentBlockedReason(order, 'processing')} 
                             onClick={() => handleStatusUpdate(order.id, 'processing')}
                           >
                             {updating === order.id ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : null}
@@ -554,7 +570,7 @@ export default function AdminOrdersPage() {
                           <Button 
                             size="sm" 
                             variant="outline"
-                            disabled={updating === order.id} 
+                            disabled={updating === order.id || !!fulfilmentBlockedReason(order, 'shipped')} 
                             onClick={() => handleStatusUpdate(order.id, 'shipped')}
                           >
                             {updating === order.id ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : null}
@@ -565,7 +581,7 @@ export default function AdminOrdersPage() {
                           <Button 
                             size="sm" 
                             variant="outline"
-                            disabled={updating === order.id} 
+                            disabled={updating === order.id || !!fulfilmentBlockedReason(order, 'delivered')} 
                             onClick={() => handleStatusUpdate(order.id, 'delivered')}
                           >
                             {updating === order.id ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : null}

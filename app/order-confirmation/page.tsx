@@ -256,7 +256,7 @@ export default function OrderConfirmationPage() {
                   <div>
                     <span className="text-muted-foreground">Shipping Method:</span>
                     <div className="font-medium">
-                      {orderDetails.shipping === 4.99 ? "Standard Delivery" : "Express Delivery"}
+                      {orderDetails.shippingMethod || (orderDetails.shipping === 4.99 ? "Standard Delivery" : "Express Delivery")}
                     </div>
                   </div>
                   <div>

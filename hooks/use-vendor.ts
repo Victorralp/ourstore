@@ -1,17 +1,28 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { useAuth } from "@/components/auth-provider"
 import { getActiveStore, getUserStores, getVendorOwner, switchActiveStore, Vendor, VendorOwner } from "@/lib/firebase-vendors"
 
 export function useVendor() {
   const { user, isLoading: authLoading } = useAuth()
-  const [activeStore, setActiveStore] = useState<Vendor | null>(null)
-  const [allStores, setAllStores] = useState<Vendor[]>([])
-  const [vendorOwner, setVendorOwner] = useState<VendorOwner | null>(null)
-  const [vendorLoading, setVendorLoading] = useState(true)
+  const [activeStore, setActiveStoreState] = useState<Vendor | null>(null)
+  const [allStores, setAllStoresState] = useState<Vendor[]>([])
+  const [vendorOwner, setVendorOwnerState] = useState<VendorOwner | null>(null)
+  // The user whose stores have finished loading, so "loading" is derived rather
+  // than flipped by effects that can lag a render behind sign-in
+  const [loadedFor, setLoadedFor] = useState<string | null>(null)
+  const [loadError, setLoadError] = useState<string | null>(null)
+  // The signed-in user right now. A fetch started for an earlier account must not
+  // write its stores into this one's state.
+  const currentUid = useRef<string | null>(null)
 
   const fetchVendorData = async (userId: string) => {
+    const isCurrent = () => currentUid.current === userId
+    const setAllStores = (stores: Vendor[]) => { if (isCurrent()) setAllStoresState(stores) }
+    const setActiveStore = (store: Vendor | null) => { if (isCurrent()) setActiveStoreState(store) }
+    const setVendorOwner = (owner: VendorOwner | null) => { if (isCurrent()) setVendorOwnerState(owner) }
+    if (isCurrent()) setLoadError(null)
     try {
       console.log("useVendor: fetchVendorData - Fetching vendor data for user:", userId);
       
@@ -79,10 +90,9 @@ export function useVendor() {
         await switchActiveStore(userId, stores[0].id);
       }
     } catch (error) {
+      // Keep what we had: a failed load must not look like "this user has no stores"
       console.error("useVendor: Failed to fetch vendor data:", error);
-      setActiveStore(null);
-      setAllStores([]);
-      setVendorOwner(null);
+      if (isCurrent()) setLoadError("We couldn't load your store details. Please try again.");
     }
   }
 
@@ -92,25 +102,27 @@ export function useVendor() {
       return; // Wait for authentication to resolve
     }
 
+    // Clear any previous account's stores before loading this one's
+    currentUid.current = user?.uid ?? null;
+    setActiveStoreState(null);
+    setAllStoresState([]);
+    setVendorOwnerState(null);
+    setLoadedFor(null);
+    setLoadError(null);
+
     if (!user) {
       console.log("useVendor: No user, setting vendor to null.");
-      setActiveStore(null);
-      setAllStores([]);
-      setVendorOwner(null);
-      setVendorLoading(false);
       return;
     }
 
     let isMounted = true;
-    // Stay in a loading state until this user's stores are known, so guards
-    // don't treat a real vendor as "no stores" for a moment
-    setVendorLoading(true);
+    const uid = user.uid;
     
-    fetchVendorData(user.uid)
+    fetchVendorData(uid)
       .finally(() => {
         if (isMounted) {
-          setVendorLoading(false);
-          console.log("useVendor: fetchVendorData finished, vendorLoading set to false.");
+          setLoadedFor(uid);
+          console.log("useVendor: fetchVendorData finished for", uid);
         }
       });
 
@@ -122,11 +134,14 @@ export function useVendor() {
   const switchStore = async (storeId: string) => {
     if (!user || !vendorOwner) return
     
+    const uid = user.uid
     try {
-      await switchActiveStore(user.uid, storeId)
+      await switchActiveStore(uid, storeId)
+      // The account may have changed while this was saving
+      if (currentUid.current !== uid) return
       const newActiveStore = allStores.find(store => store.id === storeId)
-      setActiveStore(newActiveStore || null)
-      setVendorOwner(prev => prev ? { ...prev, activeStoreId: storeId } : null)
+      setActiveStoreState(newActiveStore || null)
+      setVendorOwnerState(prev => prev ? { ...prev, activeStoreId: storeId } : null)
     } catch (error) {
       console.error("Failed to switch store:", error)
     }
@@ -137,23 +152,29 @@ export function useVendor() {
     await fetchVendorData(user.uid)
   }
 
-  const loading = authLoading || vendorLoading
+  // Only this user's loaded stores count; until then (including the render right
+  // after switching accounts) nothing from an earlier account is exposed
+  const ready = !!user && loadedFor === user.uid
+  const loading = authLoading || (!!user && !ready)
+  const stores = ready ? allStores : []
+  const store = ready ? activeStore : null
 
   // A vendor is anyone who has applied for at least one store. Pending applicants
   // can open the dashboard to see their status, but only approved stores can sell.
-  const isVendor = !!user && allStores.length > 0
-  const isApprovedVendor = !!activeStore?.approved
+  const isVendor = stores.length > 0
+  const isApprovedVendor = !!store?.approved
 
   return { 
-    vendor: activeStore, // Current active store (backward compatibility)
-    activeStore,
-    allStores,
-    vendorOwner,
+    vendor: store, // Current active store (backward compatibility)
+    activeStore: store,
+    allStores: stores,
+    vendorOwner: ready ? vendorOwner : null,
     isVendor, 
     isApprovedVendor,
+    loadError,
     loading,
     switchStore,
     refreshStores,
-    canCreateMoreStores: allStores.length < 3
+    canCreateMoreStores: stores.length < 3
   }
 } 

@@ -1,6 +1,5 @@
-import { collection, doc, getDocs, getDoc, addDoc, updateDoc, query, where, orderBy, limit, startAfter, onSnapshot } from "firebase/firestore"
+import { collection, doc, getDocs, getDoc, updateDoc, query, where, orderBy, limit, startAfter, onSnapshot } from "firebase/firestore"
 import { db } from "./firebase"
-import { updateProduct } from "./firebase-products"
 
 export interface OrderItem {
   productId: string
@@ -9,6 +8,7 @@ export interface OrderItem {
   quantity: number
   price: number
   total: number
+  vendorId?: string
 }
 
 export interface ShippingAddress {
@@ -33,8 +33,17 @@ export interface Order {
   total: number
   currency: string
   status: "pending" | "confirmed" | "processing" | "shipped" | "delivered" | "cancelled"
-  paymentStatus: "pending" | "paid" | "failed" | "refunded"
+  // "abandoned": an unpaid checkout replaced by a newer attempt
+  paymentStatus: "pending" | "paid" | "failed" | "refunded" | "abandoned"
   paymentMethod: string
+  paymentReference?: string
+  // Paid, but can't be fulfilled (sold out, or cancelled before payment): refund it
+  needsRefund?: boolean
+  // Stores selling in this order (Paystack orders)
+  vendorIds?: string[]
+  // Name of the chosen delivery option, e.g. "Lagos Mainland 1"
+  shippingMethod?: string
+  shippingOptionId?: string
   shippingAddress: ShippingAddress
   billingAddress: ShippingAddress
   trackingNumber?: string
@@ -44,52 +53,8 @@ export interface Order {
   updatedAt: Date
 }
 
-// Order functions
-export const createOrder = async (orderData: Omit<Order, "id" | "orderNumber" | "createdAt" | "updatedAt">) => {
-  try {
-    // Generate order number
-    const orderNumber = `AYO-${Date.now()}-${Math.random().toString(36).substr(2, 9).toUpperCase()}`
-
-    const order: Omit<Order, "id"> = {
-      ...orderData,
-      orderNumber,
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    }
-
-    // Create the order first
-    const docRef = await addDoc(collection(db, "orders"), order)
-    
-    // CRITICAL: Decrement inventory for each ordered item
-    try {
-      for (const item of orderData.items) {
-        // Get current product data
-        const productDoc = await getDoc(doc(db, "products", item.productId))
-        if (productDoc.exists()) {
-          const productData = productDoc.data()
-          const currentStock = productData.stockQuantity || 0
-          const newStock = Math.max(0, currentStock - item.quantity)
-          
-          // Update product stock
-          await updateProduct(item.productId, {
-            stockQuantity: newStock,
-            inStock: newStock > 0
-          })
-          
-          console.log(`Decremented stock for ${item.name}: ${currentStock} -> ${newStock}`)
-        }
-      }
-    } catch (stockError) {
-      console.error("Error updating stock levels:", stockError)
-      // Note: Order still created, but stock update failed
-      // Consider implementing compensating transaction in production
-    }
-    
-    return { id: docRef.id, ...order }
-  } catch (error: any) {
-    throw new Error(error.message)
-  }
-}
+// Orders are created and marked paid on the server, by the Paystack payment
+// routes (app/api/payments/paystack), never from the browser.
 
 export const getOrder = async (id: string): Promise<Order | null> => {
   try {

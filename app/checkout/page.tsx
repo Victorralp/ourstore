@@ -25,7 +25,8 @@ import {
   BreadcrumbSeparator,
 } from "@/components/ui/breadcrumb"
 import { NIGERIA_STATES } from "@/lib/nigeria-states"
-import { lagosShippingOptions, otherShippingOptions, VAT_RATE, roundNaira } from "@/lib/checkout-pricing"
+import { clearCheckoutAttemptId, getCheckoutAttemptId } from "@/lib/checkout-attempt"
+import { lagosShippingOptions, otherShippingOptions, computeTotals, getShippingOption, roundNaira, INTERNATIONAL_OPTION_ID, type DeliveryType } from "@/lib/checkout-pricing"
 import Link from "next/link"
 import ClientOnly from "@/components/client-only"
 
@@ -62,7 +63,7 @@ const emptyBillingInfo = {
 
 export default function CheckoutPage() {
   const router = useRouter()
-  const { items, getTotalPrice, clearCart } = useCart()
+  const { items, clearCart } = useCart()
   // We will override formatting to NGN on this page
   const formatPrice = (amount: number) => formatNaira(amount)
   const { user, profile, isLoading: authLoading } = useAuth()
@@ -137,13 +138,41 @@ export default function CheckoutPage() {
   const [otherShippingOptionId, setOtherShippingOptionId] = useState(otherShippingOptions[0].id);
   const [sameAsShipping, setSameAsShipping] = useState(true)
 
-  const subtotal = getTotalPrice()
-  const shippingCost = deliveryType === 'lagos' 
-    ? lagosShippingOptions.find(option => option.id === lagosShippingOptionId)?.price || 0
-    : otherShippingOptions.find(option => option.id === otherShippingOptionId)?.price || 0;
-  // Shown here for the customer; the payment API recomputes the real amount from stored prices
-  const tax = roundNaira(subtotal * VAT_RATE)
-  const total = roundNaira(subtotal + shippingCost + tax)
+  // Same rules as the payment API, which recomputes the real amount from stored prices
+  const shippingOption = getShippingOption(
+    deliveryType as DeliveryType,
+    deliveryType === "lagos" ? lagosShippingOptionId : otherShippingOptionId
+  )
+  const { subtotal, shipping: shippingCost, tax, total } = computeTotals(
+    items.map((item) => roundNaira(item.price * item.quantity)),
+    shippingOption?.price ?? 0
+  )
+
+  // A new total from the server, after prices changed, that the customer must accept
+  const [confirmTotal, setConfirmTotal] = useState<number | null>(null)
+  useEffect(() => {
+    setConfirmTotal(null)
+  }, [total])
+
+  // International delivery needs the customer's own country; every other option
+  // ships within Nigeria
+  const isInternational = shippingOption?.id === INTERNATIONAL_OPTION_ID
+  useEffect(() => {
+    setShippingInfo((prev) => {
+      if (isInternational) {
+        return prev.country === "Nigeria" ? { ...prev, country: "", state: "" } : prev
+      }
+      return prev.country === "Nigeria"
+        ? prev
+        : { ...prev, country: "Nigeria", state: NIGERIA_STATES.includes(prev.state) ? prev.state : "Lagos" }
+    })
+  }, [isInternational])
+
+  // Identifies this checkout attempt, so a retry after a lost response, a double
+  // click, a reload or the same checkout in another tab gets the same order and
+  // Paystack payment instead of a second one. The server derives the order from
+  // this id and the cart, so a changed cart is still a new order. A new id is used
+  // after the server turns an attempt down, or once it's paid.
 
   const handleShippingChange = (field: string, value: string) => {
     setShippingInfo((prev) => ({ ...prev, [field]: value }))
@@ -163,7 +192,8 @@ export default function CheckoutPage() {
           shippingInfo.phone &&
           shippingInfo.address &&
           shippingInfo.city &&
-          shippingInfo.postalCode
+          shippingInfo.postalCode &&
+          (!isInternational || (shippingInfo.country.trim() && shippingInfo.country.trim().toLowerCase() !== "nigeria"))
         )
       case 2:
         if (sameAsShipping) return true
@@ -182,7 +212,7 @@ export default function CheckoutPage() {
     }
   }
 
-  const handlePlaceOrder = async () => {
+  const handlePlaceOrder = async (expectedTotal: number) => {
     setIsProcessing(true)
 
     try {
@@ -199,6 +229,7 @@ export default function CheckoutPage() {
 
       // The server builds the order from stored prices, so only ids, quantities
       // and delivery details are sent
+      const attemptId = getCheckoutAttemptId()
       const token = await user.getIdToken()
       const response = await fetch("/api/payments/paystack/initialize", {
         method: "POST",
@@ -209,18 +240,29 @@ export default function CheckoutPage() {
           billing: sameAsShipping ? null : billingInfo,
           deliveryType,
           shippingOptionId: deliveryType === "lagos" ? lagosShippingOptionId : otherShippingOptionId,
+          // The total the customer agreed to; the server won't charge anything else
+          expectedTotal,
+          attemptId,
         }),
       })
       const result = await response.json().catch(() => null)
+      // Turned down (or nothing created): the next try is a new attempt. Not while
+      // the first request is still starting the payment, so a retry can resume it.
+      if (!response.ok && result?.code !== "in_progress") clearCheckoutAttemptId()
+
+      // Prices changed: show the new total and let the customer decide
+      if (response.status === 409 && result?.code === "total_changed" && typeof result.total === "number") {
+        setConfirmTotal(result.total)
+        setIsProcessing(false)
+        return
+      }
+      // A retry of an attempt that was already paid
+      if (response.status === 409 && result?.code === "already_paid" && typeof result.orderId === "string") {
+        router.push(`/order-confirmation?orderId=${encodeURIComponent(result.orderId)}`)
+        return
+      }
       if (!response.ok || !result?.authorizationUrl) {
         throw new Error(result?.error || "We couldn't start the payment. Please try again.")
-      }
-
-      if (Math.abs(result.total - total) > 0.01) {
-        toast({
-          title: "Your total was updated",
-          description: `Some prices have changed. You'll be charged ${formatPrice(result.total)}.`,
-        })
       }
 
       // Pay on Paystack's page; it sends the customer back to /checkout/verify.
@@ -375,6 +417,27 @@ export default function CheckoutPage() {
                           required
                         />
                       </div>
+                      {isInternational ? (
+                        <>
+                          <div>
+                            <Label htmlFor="country">Country *</Label>
+                            <Input
+                              id="country"
+                              value={shippingInfo.country}
+                              onChange={(e) => handleShippingChange("country", e.target.value)}
+                              required
+                            />
+                          </div>
+                          <div>
+                            <Label htmlFor="region">State / Region</Label>
+                            <Input
+                              id="region"
+                              value={shippingInfo.state}
+                              onChange={(e) => handleShippingChange("state", e.target.value)}
+                            />
+                          </div>
+                        </>
+                      ) : (
                       <div>
                         <Label htmlFor="state">State *</Label>
                         <Select
@@ -411,7 +474,13 @@ export default function CheckoutPage() {
                           </SelectContent>
                         </Select>
                       </div>
+                      )}
                     </div>
+                    {isInternational && (
+                      <p className="text-sm text-muted-foreground mt-2">
+                        International delivery: enter your full address abroad, including the country.
+                      </p>
+                    )}
 
                     {/* Shipping Method */}
                     <div className="mt-6">
@@ -592,6 +661,16 @@ export default function CheckoutPage() {
                     <CardTitle>Review Your Order</CardTitle>
                   </CardHeader>
                   <CardContent className="space-y-6">
+                    {confirmTotal !== null && (
+                      <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-amber-900">
+                        <p className="font-medium">Prices have changed since you added these items</p>
+                        <p className="text-sm">
+                          Your new total is {formatPrice(confirmTotal)} (was {formatPrice(total)}). You&apos;ll only
+                          be charged the new total if you choose to continue.
+                        </p>
+                      </div>
+                    )}
+
                     {/* Order Items */}
                     <div>
                       <h3 className="font-semibold mb-4">Order Items</h3>
@@ -659,8 +738,12 @@ export default function CheckoutPage() {
                     Continue
                   </Button>
                 ) : (
-                  <Button onClick={handlePlaceOrder} disabled={isProcessing} className="bg-green-600 hover:bg-green-700">
-                    {isProcessing ? "Processing..." : `Place Order - ${formatPrice(total)}`}
+                  <Button onClick={() => handlePlaceOrder(confirmTotal ?? total)} disabled={isProcessing} className="bg-green-600 hover:bg-green-700">
+                    {isProcessing
+                      ? "Processing..."
+                      : confirmTotal !== null
+                        ? `Pay New Total - ${formatPrice(confirmTotal)}`
+                        : `Place Order - ${formatPrice(total)}`}
                   </Button>
                 )}
               </div>
