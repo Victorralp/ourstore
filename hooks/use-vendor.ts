@@ -102,6 +102,9 @@ export function useVendor() {
     }
 
     let isMounted = true;
+    // Stay in a loading state until this user's stores are known, so guards
+    // don't treat a real vendor as "no stores" for a moment
+    setVendorLoading(true);
     
     fetchVendorData(user.uid)
       .finally(() => {
@@ -136,10 +139,10 @@ export function useVendor() {
 
   const loading = authLoading || vendorLoading
 
-  // TEMPORARY BYPASS: Allow any logged-in user to access vendor dashboard
-  // This allows users to register as vendors even if they don't have stores yet
-  // Revert to `!!activeStore?.approved` for production.
-  const isVendor = !!user
+  // A vendor is anyone who has applied for at least one store. Pending applicants
+  // can open the dashboard to see their status, but only approved stores can sell.
+  const isVendor = !!user && allStores.length > 0
+  const isApprovedVendor = !!activeStore?.approved
 
   return { 
     vendor: activeStore, // Current active store (backward compatibility)
@@ -147,6 +150,7 @@ export function useVendor() {
     allStores,
     vendorOwner,
     isVendor, 
+    isApprovedVendor,
     loading,
     switchStore,
     refreshStores,
