@@ -20,7 +20,7 @@ export function useStockAwareAddToCart() {
       toast({ title: "No more in stock", description: `All available units of ${product.name} are already in your cart.` })
       return false
     }
-    addToCart({ ...item, quantity: Math.min(item.quantity, left) })
+    addToCart({ ...item, quantity: Math.min(item.quantity, left) }, product.stockQuantity)
     return true
   }
 }

@@ -17,7 +17,9 @@ export interface CartItem {
 
 interface CartContextType {
   items: CartItem[]
-  addToCart: (item: CartItem) => void
+  // maxTotal: the most of this product the cart may hold (its stock), applied to
+  // the latest cart when the item is added
+  addToCart: (item: CartItem, maxTotal?: number) => void
   removeFromCart: (productId: string) => void
   updateQuantity: (productId: string, quantity: number) => void
   clearCart: () => void
@@ -68,18 +70,24 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
     };
   }, [setItems]);
 
-  const addToCart = (item: CartItem) => {
+  const addToCart = (item: CartItem, maxTotal = Infinity) => {
+    // Checked inside the update, against the cart as stored now (which includes
+    // adds made moments ago or in another tab), so quick repeated adds can't
+    // take the cart past the stock
     setItems((prevItems) => {
       const existingItem = prevItems.find((i) => i.productId === item.productId)
+      const quantity = Math.min((existingItem?.quantity ?? 0) + item.quantity, maxTotal)
 
       if (existingItem) {
+        if (quantity <= existingItem.quantity) return prevItems
         return prevItems.map((i) => 
           i.productId === item.productId 
-            ? { ...i, quantity: i.quantity + item.quantity } 
+            ? { ...i, quantity } 
             : i
         )
       } else {
-        return [...prevItems, item]
+        if (quantity < 1) return prevItems
+        return [...prevItems, { ...item, quantity }]
       }
     })
   }
