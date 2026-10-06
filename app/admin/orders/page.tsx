@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import Link from "next/link"
 import Image from "next/image"
 import { Button } from "@/components/ui/button"
@@ -31,22 +31,39 @@ import {
 } from "@/components/ui/select"
 import { useAdmin } from "@/hooks/use-admin"
 import { useCurrency } from "@/components/currency-provider"
-import { listenToAllOrders, updateOrder } from "@/lib/firebase-orders"
-import { Order } from "@/types"
+import { getOrdersBefore, listenToAllOrders, updateOrder, type Order } from "@/lib/firebase-orders"
 import { useToast } from "@/hooks/use-toast"
 import { RequireAdmin } from "@/components/require-admin"
 
 // Orders shown per page
 const PAGE_SIZE = 20
-// How many more orders to fetch each time the admin pages past what's loaded
+// Newest orders kept live by the real-time listener
+const LIVE_WINDOW = 100
+// How many older orders to fetch each time the admin pages past what's loaded
 const FETCH_STEP = 100
+
+// Combine order lists, keeping the first copy of each order
+const mergeOrders = (first: Order[], second: Order[]) => {
+  const seen = new Set<string>()
+  return [...first, ...second].filter((order) => {
+    if (seen.has(order.id)) return false
+    seen.add(order.id)
+    return true
+  })
+}
 
 export default function AdminOrdersPage() {
   const { isAdmin, loading: adminLoading } = useAdmin()
   const { formatPrice } = useCurrency()
   const { toast } = useToast()
   
-  const [orders, setOrders] = useState<Order[]>([])
+  // Newest orders, kept up to date by the real-time listener
+  const [liveOrders, setLiveOrders] = useState<Order[]>([])
+  // Older orders, each batch fetched once as the admin pages back through history
+  const [olderOrders, setOlderOrders] = useState<Order[]>([])
+  const previousLiveOrders = useRef<Order[]>([])
+  const [liveWindowFull, setLiveWindowFull] = useState(false)
+  const [olderExhausted, setOlderExhausted] = useState(false)
   const [loading, setLoading] = useState(true)
   const [imageError, setImageError] = useState<Record<string, boolean>>({})
   const [error, setError] = useState<string | null>(null)
@@ -55,9 +72,15 @@ export default function AdminOrdersPage() {
   const [sortOrder, setSortOrder] = useState<"newest" | "oldest" | "highest" | "lowest">("newest")
   const [updating, setUpdating] = useState<string | null>(null)
   const [page, setPage] = useState(0)
-  const [fetchLimit, setFetchLimit] = useState(FETCH_STEP)
-  const [hasMore, setHasMore] = useState(false)
+  // Page the admin asked for that is waiting on older orders to load
+  const [pendingPage, setPendingPage] = useState<number | null>(null)
   const [loadingMore, setLoadingMore] = useState(false)
+  const [retryKey, setRetryKey] = useState(0)
+
+  // Live data wins over an older fetched copy of the same order
+  const orders = mergeOrders(liveOrders, olderOrders)
+  // A full live window means there may be older orders still to fetch
+  const hasMore = liveWindowFull && !olderExhausted
 
   useEffect(() => {
     if (adminLoading) return
@@ -74,7 +97,6 @@ export default function AdminOrdersPage() {
       console.error("Error loading orders:", err)
       setError(err?.message || "Failed to load orders")
       setLoading(false)
-      setLoadingMore(false)
 
       toast({
         title: "Error loading orders",
@@ -83,41 +105,72 @@ export default function AdminOrdersPage() {
       })
     }
 
-    // Real-time listener over the newest `fetchLimit` orders; raising the limit
-    // re-subscribes and pulls in older orders while keeping everything live
     try {
       unsubscribe = listenToAllOrders((updatedOrders) => {
         if (cancelled) return
-        setOrders(updatedOrders)
-        // A full batch means there may be older orders still to fetch
-        setHasMore(updatedOrders.length >= fetchLimit)
+        // Orders pushed out of the live window by newer ones still exist, so keep
+        // them with the older orders instead of letting them vanish from the list
+        const liveIds = new Set(updatedOrders.map((order) => order.id))
+        const pushedOut = previousLiveOrders.current.filter((order) => !liveIds.has(order.id))
+        previousLiveOrders.current = updatedOrders
+        if (pushedOut.length > 0) {
+          setOlderOrders((current) => mergeOrders(pushedOut, current))
+        }
+
+        setLiveOrders(updatedOrders)
+        setLiveWindowFull(updatedOrders.length >= LIVE_WINDOW)
         setError(null)
         setLoading(false)
-        setLoadingMore(false)
-      }, fetchLimit, (err) => {
+      }, LIVE_WINDOW, (err) => {
         if (!cancelled) showError(err)
       })
     } catch (err: any) {
       showError(err)
     }
 
-    // Clean up listener on unmount or when the limit changes
+    // Clean up listener on unmount
     return () => {
       cancelled = true
       if (unsubscribe) {
         unsubscribe()
       }
     }
-  }, [isAdmin, adminLoading, fetchLimit, toast])
+  }, [isAdmin, adminLoading, retryKey, toast])
 
   // Start from the first page whenever the filters or sort change
   useEffect(() => {
     setPage(0)
+    setPendingPage(null)
   }, [searchTerm, statusFilter, sortOrder])
 
-  const loadOlderOrders = () => {
+  const retryLoading = () => {
+    setError(null)
+    setLoading(orders.length === 0)
+    setRetryKey((key) => key + 1)
+  }
+
+  const loadOlderOrders = async () => {
+    if (loadingMore || !hasMore || orders.length === 0) return
+
+    // Continue from the oldest order loaded so far
+    const oldest = Math.min(...orders.map((order) => new Date(order.createdAt || 0).getTime()))
+
     setLoadingMore(true)
-    setFetchLimit((current) => current + FETCH_STEP)
+    try {
+      const batch = await getOrdersBefore(new Date(oldest), FETCH_STEP)
+      setOlderOrders((current) => mergeOrders(current, batch))
+      if (batch.length < FETCH_STEP) {
+        setOlderExhausted(true)
+      }
+    } catch (err: any) {
+      toast({
+        title: "Couldn't load older orders",
+        description: err?.message || "Please try again",
+        variant: "destructive",
+      })
+    } finally {
+      setLoadingMore(false)
+    }
   }
 
   // Filter and sort orders
@@ -162,13 +215,38 @@ export default function AdminOrdersPage() {
   const onLastLoadedPage = page >= pageCount - 1
 
   const goToPage = (nextPage: number) => {
+    if (nextPage > page && nextPage >= pageCount) {
+      // That page isn't loaded yet: fetch older orders and move once they arrive
+      setPendingPage(nextPage)
+      loadOlderOrders()
+      return
+    }
+
     // Start fetching older orders once the admin reaches the last loaded page
-    if (nextPage > page && (nextPage + 1) * PAGE_SIZE >= filteredOrders.length && hasMore && !loadingMore) {
+    if (nextPage > page && nextPage === pageCount - 1 && hasMore) {
       loadOlderOrders()
     }
     setPage(nextPage)
     window.scrollTo({ top: 0, behavior: "smooth" })
   }
+
+  // Once older orders have loaded, go to the requested page if it now has orders;
+  // otherwise stay put, since any new matches landed on the current page
+  useEffect(() => {
+    if (pendingPage === null || loadingMore) return
+    if (pendingPage < pageCount) {
+      setPage(pendingPage)
+      window.scrollTo({ top: 0, behavior: "smooth" })
+    }
+    setPendingPage(null)
+  }, [pendingPage, loadingMore, pageCount])
+
+  // Keep the page in range if the list shrinks, e.g. an order stops matching the filter
+  useEffect(() => {
+    if (page > pageCount - 1) {
+      setPage(pageCount - 1)
+    }
+  }, [page, pageCount])
 
   // Function to get status badge color
   const getStatusBadgeVariant = (status: string) => {
@@ -203,7 +281,7 @@ export default function AdminOrdersPage() {
   };
 
   // Function to format date
-  const formatDate = (timestamp: string | number | null) => {
+  const formatDate = (timestamp: Date | string | number | null) => {
     if (!timestamp) return "Unknown date";
     
     return new Date(timestamp).toLocaleDateString("en-GB", {
@@ -217,14 +295,19 @@ export default function AdminOrdersPage() {
   const handleStatusUpdate = async (orderId: string, newStatus: Order["status"]) => {
     setUpdating(orderId);
     try {
-      await updateOrder(orderId, { 
+      const updates = {
         status: newStatus,
         // Add tracking number for shipped status
         ...(newStatus === 'shipped' ? {
           trackingNumber: `TRK-${Date.now().toString().slice(-8)}`,
           trackingUrl: "https://tracking.example.com"
         } : {})
-      });
+      }
+      await updateOrder(orderId, updates);
+      // Older orders aren't covered by the live listener, so update them locally
+      setOlderOrders((current) => current.map((order) =>
+        order.id === orderId ? { ...order, ...updates } : order
+      ));
       
       toast({
         title: "Order updated",
@@ -318,16 +401,21 @@ export default function AdminOrdersPage() {
           </CardContent>
         </Card>
 
+        {error && !loading && (
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-red-50 border border-red-200 text-red-800 rounded-lg p-4 mb-8">
+            <span>{error}</span>
+            <Button variant="outline" size="sm" onClick={retryLoading}>
+              Retry
+            </Button>
+          </div>
+        )}
+
         {loading ? (
           <div className="flex items-center justify-center py-16">
             <Loader2 className="h-8 w-8 animate-spin mr-2" />
             <span>Loading orders...</span>
           </div>
-        ) : error ? (
-          <div className="bg-red-50 border border-red-200 text-red-800 rounded-lg p-4 mb-8">
-            {error}
-          </div>
-        ) : filteredOrders.length === 0 ? (
+        ) : error && orders.length === 0 ? null : filteredOrders.length === 0 ? (
           <div className="text-center py-16">
             <Package className="h-12 w-12 mx-auto text-muted-foreground mb-4" />
             <h2 className="text-2xl font-bold mb-2">No Orders Found</h2>
@@ -361,18 +449,6 @@ export default function AdminOrdersPage() {
               <p className="text-sm text-muted-foreground">
                 Search, filters and sorting cover the {orders.length} most recent orders. Go past the last page to load older ones.
               </p>
-            )}
-            {pageOrders.length === 0 && (
-              <div className="flex items-center justify-center py-16 text-muted-foreground">
-                {loadingMore ? (
-                  <>
-                    <Loader2 className="h-6 w-6 animate-spin mr-2" />
-                    <span>Loading older orders...</span>
-                  </>
-                ) : (
-                  <span>No more orders match your current filters.</span>
-                )}
-              </div>
             )}
             {pageOrders.map((order) => (
               <Card key={order.id} className="overflow-hidden">
@@ -521,16 +597,14 @@ export default function AdminOrdersPage() {
             {/* Pagination */}
             <div className="flex flex-col sm:flex-row items-center justify-between gap-4 pt-2">
               <p className="text-sm text-muted-foreground">
-                {pageOrders.length > 0
-                  ? `Showing ${pageStart + 1}–${pageStart + pageOrders.length} of ${filteredOrders.length}${hasMore ? "+" : ""} orders`
-                  : `${filteredOrders.length}${hasMore ? "+" : ""} orders`}
+                Showing {pageStart + 1}–{pageStart + pageOrders.length} of {filteredOrders.length}{hasMore ? "+" : ""} orders
               </p>
               <div className="flex items-center gap-2">
                 <Button
                   variant="outline"
                   size="sm"
                   disabled={page === 0}
-                  onClick={() => goToPage(Math.min(page - 1, pageCount - 1))}
+                  onClick={() => goToPage(page - 1)}
                 >
                   <ChevronLeft className="h-4 w-4 mr-1" />
                   Previous
