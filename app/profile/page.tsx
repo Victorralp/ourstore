@@ -16,6 +16,7 @@ import { Switch } from "@/components/ui/switch"
 import { User, Package, Heart, Settings, Bell, Shield, CreditCard, MapPin, Edit, Plus, Home, Building, Briefcase, ShoppingCart, Trash2, ExternalLink } from "lucide-react"
 import { useAuth } from "@/components/auth-provider"
 import type { SavedAddress } from "@/lib/firebase-auth"
+import { NIGERIA_STATES } from "@/lib/nigeria-states"
 import { useCurrency } from "@/components/currency-provider"
 import { useToast } from "@/hooks/use-toast"
 import { useLocalStorage } from "@/hooks/use-local-storage"
@@ -75,6 +76,7 @@ export default function ProfilePage() {
     name: "",
     address: "",
     city: "",
+    state: "",
     postalCode: "",
     country: "",
     isDefault: false,
@@ -154,8 +156,9 @@ export default function ProfilePage() {
       name: `${profileData.firstName} ${profileData.lastName}`.trim() || "John Doe",
       address: "",
       city: "",
+      state: "",
       postalCode: "",
-      country: "United Kingdom",
+      country: "Nigeria",
       isDefault: addresses.length === 0, // Make default if it's the first address
     })
     setAddressDialogOpen(true)
@@ -164,7 +167,8 @@ export default function ProfilePage() {
   const openEditAddressDialog = (address: SavedAddress) => {
     setCurrentAddress(address)
     setAddressForm({
-      ...address
+      ...address,
+      state: address.state ?? "",
     })
     setAddressDialogOpen(true)
   }
@@ -218,7 +222,8 @@ export default function ProfilePage() {
 
   const handleSaveAddress = async () => {
     // Validate form data
-    if (!addressForm.name || !addressForm.address || !addressForm.city || !addressForm.postalCode || !addressForm.country) {
+    if (!addressForm.name || !addressForm.address || !addressForm.city || !addressForm.postalCode || !addressForm.country
+      || (addressForm.country === "Nigeria" && !addressForm.state)) {
       toast({
         title: "Missing information",
         description: "Please fill in all required fields.",
@@ -661,7 +666,7 @@ export default function ProfilePage() {
                               <div>{address.name}</div>
                               <div>{address.address}</div>
                               <div>
-                                {address.city}, {address.postalCode}
+                                {[address.city, address.state, address.postalCode].filter(Boolean).join(", ")}
                               </div>
                               <div>{address.country}</div>
                             </div>
@@ -784,7 +789,8 @@ export default function ProfilePage() {
                     <Label htmlFor="country">Country</Label>
                     <Select 
                       value={addressForm.country}
-                      onValueChange={(value) => handleAddressChange("country", value)}
+                      // A state from one country doesn't apply to another
+                      onValueChange={(value) => setAddressForm((prev) => ({ ...prev, country: value, state: "" }))}
                     >
                       <SelectTrigger id="country">
                         <SelectValue placeholder="Select country" />
@@ -798,6 +804,38 @@ export default function ProfilePage() {
                         <SelectItem value="Ghana">Ghana</SelectItem>
                       </SelectContent>
                     </Select>
+                  </div>
+
+                  <div>
+                    {addressForm.country === "Nigeria" ? (
+                      <>
+                        <Label htmlFor="state">State</Label>
+                        <Select
+                          value={addressForm.state || undefined}
+                          onValueChange={(value) => handleAddressChange("state", value)}
+                        >
+                          <SelectTrigger id="state">
+                            <SelectValue placeholder="Select state" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {NIGERIA_STATES.map((state) => (
+                              <SelectItem key={state} value={state}>
+                                {state}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </>
+                    ) : (
+                      <>
+                        <Label htmlFor="state">State / Region (optional)</Label>
+                        <Input
+                          id="state"
+                          value={addressForm.state || ""}
+                          onChange={(e) => handleAddressChange("state", e.target.value)}
+                        />
+                      </>
+                    )}
                   </div>
                   
                   <div className="flex items-center space-x-2">
