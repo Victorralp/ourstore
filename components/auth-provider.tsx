@@ -4,7 +4,7 @@ import type React from "react"
 import { createContext, useContext, useState, useEffect } from "react"
 import { onAuthStateChanged, type User } from "firebase/auth"
 import { auth } from "@/lib/firebase"
-import { getUserProfile, type UserProfile, diagnoseProfileFetchIssue } from "@/lib/firebase-auth"
+import { getUserProfile, updateSavedAddresses as saveAddressesForUser, type SavedAddress, type UserProfile, diagnoseProfileFetchIssue } from "@/lib/firebase-auth"
 
 interface AuthContextType {
   user: User | null
@@ -15,6 +15,8 @@ interface AuthContextType {
   logout: () => Promise<void>
   resetPassword: (email: string) => Promise<void>
   updateProfile: (updates: Partial<UserProfile>) => Promise<void>
+  // Change saved addresses against the latest stored list
+  updateSavedAddresses: (change: (current: SavedAddress[]) => SavedAddress[]) => Promise<void>
   isLoading: boolean
 }
 
@@ -196,18 +198,29 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const updateProfile = async (updates: Partial<UserProfile>) => {
     if (!user) throw new Error("No authenticated user")
 
-    // Roles are never changed from the client
+    // Roles are never changed from the client, and saved addresses only change
+    // through updateSavedAddresses so concurrent edits can't overwrite each other
     const safeUpdates = { ...updates }
     delete safeUpdates.role
     delete safeUpdates.uid
+    delete safeUpdates.savedAddresses
 
+    const uid = user.uid
     const { updateUserProfile } = await import("@/lib/firebase-auth")
-    await updateUserProfile(user.uid, safeUpdates)
+    await updateUserProfile(uid, safeUpdates)
 
-    // Update local profile state
-    if (profile) {
-      setProfile({ ...profile, ...safeUpdates })
-    }
+    // Update local profile state, unless the account changed while saving
+    setProfile((current) => (current && current.uid === uid ? { ...current, ...safeUpdates } : current))
+  }
+
+  const updateSavedAddresses = async (change: (current: SavedAddress[]) => SavedAddress[]) => {
+    if (!user) throw new Error("No authenticated user")
+
+    const uid = user.uid
+    const savedAddresses = await saveAddressesForUser(uid, change)
+
+    // Update local profile state, unless the account changed while saving
+    setProfile((current) => (current && current.uid === uid ? { ...current, savedAddresses } : current))
   }
 
   return (
@@ -221,6 +234,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         logout,
         resetPassword,
         updateProfile,
+        updateSavedAddresses,
         isLoading,
       }}
     >
