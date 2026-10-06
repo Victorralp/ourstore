@@ -21,6 +21,8 @@ export interface SavedAddress {
   name: string
   address: string
   city: string
+  // Addresses saved before this field existed don't have one
+  state?: string
   postalCode: string
   country: string
   isDefault: boolean

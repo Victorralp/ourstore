@@ -25,6 +25,7 @@ import {
   BreadcrumbSeparator,
 } from "@/components/ui/breadcrumb"
 import { createOrder } from "@/lib/firebase-orders"
+import { NIGERIA_STATES } from "@/lib/nigeria-states"
 import Link from "next/link"
 import ClientOnly from "@/components/client-only"
 
@@ -33,12 +34,6 @@ import ClientOnly from "@/components/client-only"
 // NGN currency formatter and Nigeria states list for this page
 const formatNaira = (amount: number) => new Intl.NumberFormat("en-NG", { style: "currency", currency: "NGN", maximumFractionDigits: 2 }).format(amount)
 
-const NIGERIA_STATES = [
-  "Abia", "Adamawa", "Akwa Ibom", "Anambra", "Bauchi", "Bayelsa", "Benue", "Borno", "Cross River", "Delta",
-  "Ebonyi", "Edo", "Ekiti", "Enugu", "Gombe", "Imo", "Jigawa", "Kaduna", "Kano", "Katsina",
-  "Kebbi", "Kogi", "Kwara", "Lagos", "Nasarawa", "Niger", "Ogun", "Ondo", "Osun", "Oyo",
-  "Plateau", "Rivers", "Sokoto", "Taraba", "Yobe", "Zamfara", "FCT Abuja"
-]
 
 const lagosShippingOptions = [
   { id: 'lagos-mainland-1', name: 'Lagos Mainland 1', price: 1500, description: 'Allen Avenue, Opebi, Toyin Ikeja' },
@@ -135,6 +130,10 @@ export default function CheckoutPage() {
 
     const defaultAddress = userProfile?.savedAddresses?.find((address) => address.isDefault)
     const [firstName = "", ...otherNames] = (defaultAddress?.name || user.displayName || "").split(" ")
+    // Checkout ships within Nigeria, so only a Nigerian state can be used
+    const savedState = defaultAddress?.state && NIGERIA_STATES.includes(defaultAddress.state)
+      ? defaultAddress.state
+      : null
 
     setShippingInfo((prev) => ({
       ...prev,
@@ -145,6 +144,8 @@ export default function CheckoutPage() {
       address: prev.address || defaultAddress?.address || "",
       city: prev.city || defaultAddress?.city || "",
       postalCode: prev.postalCode || defaultAddress?.postalCode || "",
+      // The state always has a value, so only replace it while it's still the default
+      state: savedState && prev.state === emptyShippingInfo.state ? savedState : prev.state,
     }))
     if (defaultAddress) {
       setPrefilledFromAddress(true)
