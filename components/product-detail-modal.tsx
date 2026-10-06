@@ -1,13 +1,13 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import Image from "next/image"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Heart, ShoppingCart, Minus, Plus, Star } from "lucide-react"
 import { useCart } from "@/components/cart-provider"
 import { formatCurrency } from "@/lib/utils"
-import { isOutOfStock } from "@/lib/product-stock"
+import { isOutOfStock, unitsLeftToAdd } from "@/lib/product-stock"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogClose } from "@/components/ui/dialog"
 import { useWishlist, type WishlistItem } from "@/hooks/use-wishlist"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
@@ -24,8 +24,13 @@ interface ProductDetailModalProps {
 export default function ProductDetailModal({ product, isOpen, onClose }: ProductDetailModalProps) {
   const [quantity, setQuantity] = useState(1)
   const [selectedImage, setSelectedImage] = useState(0)
-  const { addToCart } = useCart()
+  const { addToCart, getCartItem } = useCart()
   const { isInWishlist, toggleWishlist } = useWishlist()
+
+  // The modal is reused, so start each product at a quantity of 1
+  useEffect(() => {
+    setQuantity(1)
+  }, [product?.id])
 
   if (!product) return null
 
@@ -35,7 +40,7 @@ export default function ProductDetailModal({ product, isOpen, onClose }: Product
     : null
 
   const handleAddToCart = () => {
-    if (outOfStock) return
+    if (outOfStock || maxQuantity < 1) return
     addToCart({
       productId: product.id,
       name: product.name,
@@ -44,7 +49,8 @@ export default function ProductDetailModal({ product, isOpen, onClose }: Product
              product.images?.[selectedImage] || 
              product.images?.[0] || 
              "/placeholder.jpg",
-      quantity,
+      // Never more than are left after what's already in the cart
+      quantity: Math.min(quantity, maxQuantity),
       options: {}
     })
   }
@@ -66,8 +72,8 @@ export default function ProductDetailModal({ product, isOpen, onClose }: Product
   }
 
   const outOfStock = isOutOfStock(product as any)
-  // Can't add more than are left
-  const maxQuantity = typeof (product as any).stockQuantity === "number" ? (product as any).stockQuantity : Infinity
+  // Can't add more than are left, counting what's already in the cart
+  const maxQuantity = unitsLeftToAdd(product as any, getCartItem(product.id)?.quantity ?? 0)
   const incrementQuantity = () => setQuantity(prev => Math.min(prev + 1, Math.max(maxQuantity, 1)))
   const decrementQuantity = () => setQuantity(prev => prev > 1 ? prev - 1 : 1)
 
@@ -187,10 +193,10 @@ export default function ProductDetailModal({ product, isOpen, onClose }: Product
               <Button 
                 onClick={handleAddToCart}
                 className="flex-1 flex items-center justify-center gap-2"
-                disabled={outOfStock}
+                disabled={outOfStock || maxQuantity < 1}
               >
                 <ShoppingCart className="h-4 w-4" />
-                Add to Cart
+                {!outOfStock && maxQuantity < 1 ? "All in Your Cart" : "Add to Cart"}
               </Button>
               
               <Button
