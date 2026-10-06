@@ -6,7 +6,7 @@ import { useLocalStorage } from "@/hooks/use-local-storage"
 import { useToast } from "@/hooks/use-toast"
 import { Product } from "@/types"
 
-interface CartItem {
+export interface CartItem {
   options: any
   productId: string
   name: string

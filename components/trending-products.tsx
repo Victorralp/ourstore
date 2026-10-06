@@ -8,7 +8,8 @@ import { Card, CardContent, CardFooter } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Star, TrendingUp, ShoppingCart, Heart, Flame, Store, Eye } from "lucide-react"
 import { getProducts, type Product } from "@/lib/firebase-products"
-import { useCart } from "@/components/cart-provider"
+import { useStockAwareAddToCart } from "@/hooks/use-stock-aware-add-to-cart"
+import { isOutOfStock } from "@/lib/product-stock"
 import { formatCurrency } from "@/lib/utils"
 import { useWishlist, type WishlistItem } from "@/hooks/use-wishlist"
 
@@ -34,12 +35,12 @@ export default function TrendingProducts() {
     loadTrendingProducts()
   }, [])
 
-  const { addToCart } = useCart()
+  const addToCartWithinStock = useStockAwareAddToCart()
   const { toggleWishlist, isInWishlist } = useWishlist()
 
   const handleAddToCart = (product: Product, e?: React.MouseEvent) => {
     if (e) e.preventDefault();
-    addToCart({
+    addToCartWithinStock(product, {
       productId: product.id,
       name: product.name,
       price: product.discount ? product.price * (1 - product.discount / 100) : product.price,
@@ -181,7 +182,9 @@ export default function TrendingProducts() {
                     </button>
                     <button 
                       onClick={(e) => handleAddToCart(product, e)}
-                      className="w-8 h-8 rounded-full bg-white shadow-md flex items-center justify-center hover:bg-green-50 transition-colors"
+                      disabled={isOutOfStock(product)}
+                      aria-label="Add to cart"
+                      className="w-8 h-8 rounded-full bg-white shadow-md flex items-center justify-center hover:bg-green-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                       <ShoppingCart className="h-4 w-4 text-gray-600" />
                     </button>
@@ -234,7 +237,7 @@ export default function TrendingProducts() {
                   </div>
                   
                   <Badge variant="outline" className="text-xs">
-                    {product.inStock ? "In Stock" : "Out of Stock"}
+                    {isOutOfStock(product) ? "Out of Stock" : "In Stock"}
                   </Badge>
                 </div>
               </CardContent>
