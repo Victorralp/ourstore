@@ -194,11 +194,16 @@ export const getAllOrders = async (maxOrders: number = 100): Promise<Order[]> =>
     return orders
   } catch (error: any) {
     console.error("Error getting all orders:", error)
-    return []
+    // Let the caller show a load failure instead of an empty list
+    throw new Error(error.message)
   }
 }
 
-export const listenToAllOrders = (callback: (orders: Order[]) => void, maxOrders: number = 100) => {
+export const listenToAllOrders = (
+  callback: (orders: Order[]) => void,
+  maxOrders: number = 100,
+  onError?: (error: Error) => void
+) => {
   try {
     const q = query(
       collection(db, "orders"), 
@@ -223,7 +228,11 @@ export const listenToAllOrders = (callback: (orders: Order[]) => void, maxOrders
       callback(orders)
     }, (error) => {
       console.error("Error listening to orders:", error)
-      callback([])
+      if (onError) {
+        onError(error)
+      } else {
+        callback([])
+      }
     })
 
     return unsubscribe

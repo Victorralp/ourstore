@@ -181,7 +181,7 @@ export default function ServiceProviderAdminDashboard() {
         console.log("User role check:", { uid: user.uid, role: userData.role })
         
         if (userData.role !== "admin") {
-          setError(`Admin access required. Current role: ${userData.role || 'user'}. Please use the Grant Admin page if this is for development.`)
+          setError(`Admin access required. Current role: ${userData.role || 'user'}. Please contact an administrator.`)
           setLoading(false)
           return
         }
@@ -298,11 +298,6 @@ export default function ServiceProviderAdminDashboard() {
               <Button onClick={() => window.location.reload()}>
                 <RefreshCw className="h-4 w-4 mr-2" />
                 Retry
-              </Button>
-              <Button variant="outline" asChild>
-                <a href="/debug/grant-admin">
-                  Grant Admin Access
-                </a>
               </Button>
               <Button variant="outline" asChild>
                 <a href="/login">

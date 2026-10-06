@@ -61,14 +61,25 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
     }
 
+    // Only the latest auth event may update state, so a slow profile fetch for a
+    // previous account can't overwrite the current one
+    let latestAuthEvent = 0
+
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
+      const eventId = ++latestAuthEvent
+      const isCurrent = () => eventId === latestAuthEvent
+
       try {
         console.log("AuthProvider: onAuthStateChanged - user:", user ? user.uid : "null", "email:", user ? user.email : "null");
         setUser(user)
+        // Never keep a profile that belongs to a different account
+        setProfile((prev) => (prev && user && prev.uid === user.uid ? prev : null))
 
         if (user) {
+          setIsLoading(true)
           try {
             const userProfile = await fetchUserProfileWithRetry(user.uid)
+            if (!isCurrent()) return
             setProfile(userProfile)
           } catch (profileError) {
             console.error("AuthProvider: All profile fetch attempts failed:", profileError)
@@ -106,6 +117,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
               updatedAt: new Date()
             }
             
+            if (!isCurrent()) return
             console.log("AuthProvider: Using fallback profile for user", user.uid)
             setProfile(fallbackProfile)
           }
@@ -115,8 +127,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       } catch (error) {
         console.error("AuthProvider: Error in auth state change:", error)
       } finally {
-        clearTimeout(maxLoadingTimeout)
-        setIsLoading(false)
+        if (isCurrent()) {
+          clearTimeout(maxLoadingTimeout)
+          setIsLoading(false)
+        }
       }
     })
 
@@ -182,12 +196,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const updateProfile = async (updates: Partial<UserProfile>) => {
     if (!user) throw new Error("No authenticated user")
 
+    // Roles are never changed from the client
+    const safeUpdates = { ...updates }
+    delete safeUpdates.role
+    delete safeUpdates.uid
+
     const { updateUserProfile } = await import("@/lib/firebase-auth")
-    await updateUserProfile(user.uid, updates)
+    await updateUserProfile(user.uid, safeUpdates)
 
     // Update local profile state
     if (profile) {
-      setProfile({ ...profile, ...updates })
+      setProfile({ ...profile, ...safeUpdates })
     }
   }
 

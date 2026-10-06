@@ -27,7 +27,7 @@ import {
   SelectTrigger, 
   SelectValue 
 } from "@/components/ui/select"
-import { useAuth } from "@/components/auth-provider"
+import { useAdmin } from "@/hooks/use-admin"
 import { useCurrency } from "@/components/currency-provider"
 import { getAllOrders, listenToAllOrders, updateOrder } from "@/lib/firebase-orders"
 import { Order } from "@/types"
@@ -35,7 +35,7 @@ import { useToast } from "@/hooks/use-toast"
 import { RequireAdmin } from "@/components/require-admin"
 
 export default function AdminOrdersPage() {
-  const { user, isAdmin } = useAuth()
+  const { isAdmin, loading: adminLoading } = useAdmin()
   const { formatPrice } = useCurrency()
   const { toast } = useToast()
   
@@ -50,8 +50,23 @@ export default function AdminOrdersPage() {
 
   useEffect(() => {
     let unsubscribe: (() => void) | undefined;
+    let cancelled = false
+
+    const showError = (err: any) => {
+      console.error("Error loading orders:", err)
+      setError(err?.message || "Failed to load orders")
+      setLoading(false)
+
+      toast({
+        title: "Error loading orders",
+        description: err?.message || "There was a problem loading orders",
+        variant: "destructive",
+      })
+    }
 
     const loadOrders = async () => {
+      if (adminLoading) return
+
       if (!isAdmin) {
         setLoading(false)
         return
@@ -60,23 +75,19 @@ export default function AdminOrdersPage() {
       try {
         // First get initial orders
         const initialOrders = await getAllOrders(100)
+        // The page may have unmounted or lost admin access while we waited
+        if (cancelled) return
         setOrders(initialOrders)
         setLoading(false)
         
         // Then set up real-time listener
         unsubscribe = listenToAllOrders((updatedOrders) => {
           setOrders(updatedOrders)
-        }, 100)
-      } catch (err: any) {
-        console.error("Error loading orders:", err)
-        setError(err.message || "Failed to load orders")
-        setLoading(false)
-        
-        toast({
-          title: "Error loading orders",
-          description: err.message || "There was a problem loading orders",
-          variant: "destructive",
+        }, 100, (err) => {
+          if (!cancelled) showError(err)
         })
+      } catch (err: any) {
+        if (!cancelled) showError(err)
       }
     }
 
@@ -84,11 +95,12 @@ export default function AdminOrdersPage() {
 
     // Clean up listener on unmount
     return () => {
+      cancelled = true
       if (unsubscribe) {
         unsubscribe()
       }
     }
-  }, [isAdmin, toast])
+  }, [isAdmin, adminLoading, toast])
 
   // Filter and sort orders
   const filteredOrders = orders

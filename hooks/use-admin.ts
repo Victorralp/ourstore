@@ -11,50 +11,37 @@ interface UseAdminResult {
 
 export function useAdmin(): UseAdminResult {
   const { user, profile, isLoading: authLoading } = useAuth()
-  const [isAdmin, setIsAdmin] = useState(false)
-  const [loading, setLoading] = useState(true)
+  // Result of the custom-claims check, tagged with the uid it was run for
+  const [claims, setClaims] = useState<{ uid: string; admin: boolean } | null>(null)
 
   useEffect(() => {
+    if (!user) return
+
     let active = true
 
-    async function checkAdmin() {
-      // No authenticated user => not admin
-      if (!user) {
-        if (active) {
-          setIsAdmin(false)
-          setLoading(false)
-        }
-        return
-      }
-
-      // 1. Try custom claims
-      try {
-        const tokenResult = await getIdTokenResult(user, /* forceRefresh */ true)
-        if (active && tokenResult.claims?.admin) {
-          setIsAdmin(true)
-          setLoading(false)
-          return
-        }
-      } catch (err) {
+    getIdTokenResult(user, /* forceRefresh */ true)
+      .then((tokenResult) => {
+        if (active) setClaims({ uid: user.uid, admin: !!tokenResult.claims?.admin })
+      })
+      .catch((err) => {
         console.error("Failed to read ID token claims", err)
-      }
-
-      // 2. Fallback: check Firestore profile role field
-      if (active) {
-        // TEMPORARY: Grant admin access to all authenticated users
-        // REMOVE THIS LINE BEFORE PRODUCTION!
-        setIsAdmin(true)
-        // Original line: setIsAdmin(profile?.role === "admin")
-        setLoading(false)
-      }
-    }
-
-    checkAdmin()
+        if (active) setClaims({ uid: user.uid, admin: false })
+      })
 
     return () => {
       active = false
     }
-  }, [user, profile])
+  }, [user])
 
-  return { isAdmin, loading: authLoading || loading }
-} 
+  // Admin if either the custom claim or the Firestore profile role says so.
+  // Both are derived during render so callers never see a stale "not admin, done loading" state.
+  // Only trust a profile that belongs to the signed-in user
+  const roleAdmin = !!user && profile?.uid === user.uid && profile.role === "admin"
+  const claimsChecked = claims?.uid === user?.uid
+  const claimsAdmin = claimsChecked && !!claims?.admin
+
+  return {
+    isAdmin: !!user && (roleAdmin || claimsAdmin),
+    loading: authLoading || (!!user && !roleAdmin && !claimsChecked),
+  }
+}
