@@ -60,6 +60,35 @@ const otherShippingOptions = [
   { id: 'bus-park-delivery', name: 'Bus Park Delivery', price: 1000, description: '' },
 ];
 
+const emptyShippingInfo = {
+  firstName: "",
+  lastName: "",
+  email: "",
+  phone: "",
+  address: "",
+  city: "",
+  state: "Lagos",
+  postalCode: "",
+  country: "Nigeria",
+}
+
+const emptyBillingInfo = {
+  firstName: "",
+  lastName: "",
+  address: "",
+  city: "",
+  state: "Lagos",
+  postalCode: "",
+  country: "Nigeria",
+}
+
+const emptyPaymentInfo = {
+  cardNumber: "",
+  expiryDate: "",
+  cvv: "",
+  nameOnCard: "",
+}
+
 export default function CheckoutPage() {
   const router = useRouter()
   const { items, getTotalPrice, clearCart } = useCart()
@@ -70,38 +99,40 @@ export default function CheckoutPage() {
 
   const [step, setStep] = useState(1)
   const [isProcessing, setIsProcessing] = useState(false)
-  const [shippingInfo, setShippingInfo] = useState({
-    firstName: "",
-    lastName: "",
-    email: "",
-    phone: "",
-    address: "",
-    city: "",
-    state: "Lagos",
-    postalCode: "",
-    country: "Nigeria",
-  })
-  const [billingInfo, setBillingInfo] = useState({
-    firstName: "",
-    lastName: "",
-    address: "",
-    city: "",
-    state: "Lagos",
-    postalCode: "",
-    country: "Nigeria",
-  })
+  const [shippingInfo, setShippingInfo] = useState(emptyShippingInfo)
+  const [billingInfo, setBillingInfo] = useState(emptyBillingInfo)
+  const [paymentInfo, setPaymentInfo] = useState(emptyPaymentInfo)
 
-  // Prefill shipping info once per account after mount (avoids an SSR/CSR mismatch):
-  // the default saved address first, then the account's name, email and phone.
-  // Only empty fields are filled, so nothing the customer typed is overwritten.
+  // Prefill shipping info after mount (avoids an SSR/CSR mismatch): the default saved
+  // address first, then the account's name, email and phone. Only empty fields are
+  // filled, so nothing the customer typed is overwritten.
   const prefilledFor = useRef<string | null>(null)
+  const profileAppliedFor = useRef<string | null>(null)
   const [prefilledFromAddress, setPrefilledFromAddress] = useState(false)
   useEffect(() => {
-    // Wait for the profile to load so the default address isn't missed
-    if (!user || authLoading || prefilledFor.current === user.uid) return
-    prefilledFor.current = user.uid
+    // A different account, or signing out, must never inherit the previous customer's details
+    if (prefilledFor.current && prefilledFor.current !== user?.uid) {
+      setShippingInfo(emptyShippingInfo)
+      setBillingInfo(emptyBillingInfo)
+      setPaymentInfo(emptyPaymentInfo)
+      setPrefilledFromAddress(false)
+      prefilledFor.current = null
+      profileAppliedFor.current = null
+    }
 
+    // Wait for the profile to load so the default address isn't missed
+    if (!user || authLoading) return
+
+    // Fill once per account, and once more if the profile only arrives later
+    // (e.g. after auth's loading timeout)
     const userProfile = profile?.uid === user.uid ? profile : null
+    const profileAlreadyApplied = !userProfile || profileAppliedFor.current === user.uid
+    if (prefilledFor.current === user.uid && profileAlreadyApplied) return
+    prefilledFor.current = user.uid
+    if (userProfile) {
+      profileAppliedFor.current = user.uid
+    }
+
     const defaultAddress = userProfile?.savedAddresses?.find((address) => address.isDefault)
     const [firstName = "", ...otherNames] = (defaultAddress?.name || user.displayName || "").split(" ")
 
@@ -115,14 +146,10 @@ export default function CheckoutPage() {
       city: prev.city || defaultAddress?.city || "",
       postalCode: prev.postalCode || defaultAddress?.postalCode || "",
     }))
-    setPrefilledFromAddress(!!defaultAddress)
+    if (defaultAddress) {
+      setPrefilledFromAddress(true)
+    }
   }, [user, profile, authLoading])
-  const [paymentInfo, setPaymentInfo] = useState({
-    cardNumber: "",
-    expiryDate: "",
-    cvv: "",
-    nameOnCard: "",
-  })
   const [deliveryType, setDeliveryType] = useState('lagos');
   const [lagosShippingOptionId, setLagosShippingOptionId] = useState(lagosShippingOptions[0].id);
   const [otherShippingOptionId, setOtherShippingOptionId] = useState(otherShippingOptions[0].id);
