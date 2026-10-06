@@ -42,17 +42,13 @@ export default function VendorDashboardLayout({ children }: { children: React.Re
   const [sidebarOpen, setSidebarOpen] = useState(false)
 
   useEffect(() => {
-    // TEMPORARY BYPASS: Redirect is disabled to allow direct access for development.
-    // TODO: Re-enable this guard before production.
-    /*
+    // Only people who have applied for a store can use the vendor dashboard
     if (!loading && !isVendor) {
       router.push("/vendor/register")
     }
-    */
   }, [isVendor, loading, router])
 
-  // Only show loading for authentication
-  if (loading && !user) {
+  if (loading) {
     return (
       <div className="flex items-center justify-center min-h-screen bg-gray-50">
         <div className="text-center">
@@ -63,10 +59,8 @@ export default function VendorDashboardLayout({ children }: { children: React.Re
     )
   }
 
-  // Also bypassing this check to prevent a blank screen during development.
-  /*
+  // Redirecting to registration
   if (!isVendor) return null
-  */
 
   const isActive = (path: string) => {
     if (path === "/vendor/dashboard") {

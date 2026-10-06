@@ -51,7 +51,7 @@ export default function VendorAddProductPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!activeStore) return
+    if (!activeStore?.approved) return
     
     if (cloudinaryImages.length === 0) {
       alert("Please upload at least one product image.")
@@ -110,6 +110,19 @@ export default function VendorAddProductPage() {
   }
 
   if (!activeStore) return <div>Loading store information...</div>
+
+  // Only approved stores can list products
+  if (!activeStore.approved) {
+    return (
+      <div className="max-w-2xl mx-auto">
+        <h1 className="text-2xl font-semibold mb-4">Add New Product</h1>
+        <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-amber-900">
+          <p className="font-medium">Your store is waiting for approval</p>
+          <p className="text-sm">You can add products once an admin has approved {activeStore.shopName}.</p>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="max-w-2xl mx-auto">
