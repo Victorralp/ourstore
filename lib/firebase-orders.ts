@@ -1,4 +1,4 @@
-import { collection, doc, getDocs, getDoc, addDoc, updateDoc, query, where, orderBy, limit, onSnapshot } from "firebase/firestore"
+import { collection, doc, getDocs, getDoc, addDoc, updateDoc, query, where, orderBy, limit, startAfter, onSnapshot } from "firebase/firestore"
 import { db } from "./firebase"
 import { updateProduct } from "./firebase-products"
 
@@ -195,6 +195,38 @@ export const getAllOrders = async (maxOrders: number = 100): Promise<Order[]> =>
   } catch (error: any) {
     console.error("Error getting all orders:", error)
     // Let the caller show a load failure instead of an empty list
+    throw new Error(error.message)
+  }
+}
+
+// Fetch the next batch of orders placed before `before`, newest first.
+// Used to page back through order history without re-reading newer orders.
+export const getOrdersBefore = async (before: Date, maxOrders: number = 100): Promise<Order[]> => {
+  try {
+    const q = query(
+      collection(db, "orders"),
+      orderBy("createdAt", "desc"),
+      startAfter(before),
+      limit(maxOrders)
+    )
+
+    const querySnapshot = await getDocs(q)
+    const orders: Order[] = []
+
+    querySnapshot.forEach((doc) => {
+      const data = doc.data()
+      orders.push({
+        id: doc.id,
+        ...data,
+        createdAt: data.createdAt.toDate(),
+        updatedAt: data.updatedAt.toDate(),
+        estimatedDelivery: data.estimatedDelivery?.toDate(),
+      } as Order)
+    })
+
+    return orders
+  } catch (error: any) {
+    console.error("Error getting older orders:", error)
     throw new Error(error.message)
   }
 }
