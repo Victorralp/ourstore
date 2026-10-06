@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react"
 import Image from "next/image"
 import Link from "next/link"
+import { isOutOfStock } from "@/lib/product-stock"
 import { Card, CardContent, CardFooter } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -27,6 +28,7 @@ export default function ProductGrid({ products, isLoading = false }: ProductGrid
 
   const handleAddToCart = (product: Product, e?: React.MouseEvent) => {
     if (e) e.preventDefault();
+    if (isOutOfStock(product as any)) return;
     
     const discount = (product as any).discount || 0;
     const finalPrice = discount > 0 ? product.price * (1 - discount / 100) : product.price;
@@ -110,7 +112,7 @@ export default function ProductGrid({ products, isLoading = false }: ProductGrid
                 className="absolute inset-0 z-10 cursor-pointer"
                 onClick={(e) => handleProductClick(product, e)}
               >
-                {(product as any).outOfStock && (
+                {isOutOfStock(product as any) && (
                   <div className="absolute top-4 left-0 z-20 bg-red-500 text-white text-xs font-bold px-3 py-1 rounded-r-lg shadow-md">
                     Out of Stock
                   </div>
@@ -177,7 +179,7 @@ export default function ProductGrid({ products, isLoading = false }: ProductGrid
                   onClick={(e) => handleAddToCart(product, e)}
                   className={`w-10 h-10 rounded-full bg-white flex items-center justify-center hover:bg-green-500 hover:text-white transition-colors focus-visible:pointer-events-auto ${hoveredProductId === product.id ? 'pointer-events-auto' : ''}`}
                   aria-label="Add to cart"
-                  disabled={(product as any).outOfStock}
+                  disabled={isOutOfStock(product as any)}
                 >
                   <ShoppingCart className="h-5 w-5" />
                 </button>
@@ -242,9 +244,9 @@ export default function ProductGrid({ products, isLoading = false }: ProductGrid
                 className="w-full" 
                 size="sm"
                 onClick={(e) => handleAddToCart(product, e)}
-                disabled={(product as any).outOfStock}
+                disabled={isOutOfStock(product as any)}
               >
-                {(product as any).outOfStock ? "Out of Stock" : "Add to Cart"}
+                {isOutOfStock(product as any) ? "Out of Stock" : "Add to Cart"}
               </Button>
             </CardFooter>
           </Card>

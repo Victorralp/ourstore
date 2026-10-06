@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge"
 import { Heart, ShoppingCart, Minus, Plus, Star } from "lucide-react"
 import { useCart } from "@/components/cart-provider"
 import { formatCurrency } from "@/lib/utils"
+import { isOutOfStock } from "@/lib/product-stock"
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogClose } from "@/components/ui/dialog"
 import { useWishlist, type WishlistItem } from "@/hooks/use-wishlist"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
@@ -34,6 +35,7 @@ export default function ProductDetailModal({ product, isOpen, onClose }: Product
     : null
 
   const handleAddToCart = () => {
+    if (outOfStock) return
     addToCart({
       productId: product.id,
       name: product.name,
@@ -63,7 +65,10 @@ export default function ProductDetailModal({ product, isOpen, onClose }: Product
     toggleWishlist(wishlistItem)
   }
 
-  const incrementQuantity = () => setQuantity(prev => prev + 1)
+  const outOfStock = isOutOfStock(product as any)
+  // Can't add more than are left
+  const maxQuantity = typeof (product as any).stockQuantity === "number" ? (product as any).stockQuantity : Infinity
+  const incrementQuantity = () => setQuantity(prev => Math.min(prev + 1, Math.max(maxQuantity, 1)))
   const decrementQuantity = () => setQuantity(prev => prev > 1 ? prev - 1 : 1)
 
   return (
@@ -98,7 +103,7 @@ export default function ProductDetailModal({ product, isOpen, onClose }: Product
                 />
               )}
               
-              {!product.inStock && (
+              {outOfStock && (
                 <div className="absolute top-4 left-0 z-10 bg-red-500 text-white text-xs font-bold px-3 py-1 rounded-r-lg shadow-md">
                   Out of Stock
                 </div>
@@ -169,6 +174,7 @@ export default function ProductDetailModal({ product, isOpen, onClose }: Product
                   variant="outline" 
                   size="icon" 
                   onClick={incrementQuantity}
+                  disabled={quantity >= maxQuantity}
                   className="h-8 w-8 rounded-l-none"
                 >
                   <Plus className="h-3 w-3" />
@@ -181,7 +187,7 @@ export default function ProductDetailModal({ product, isOpen, onClose }: Product
               <Button 
                 onClick={handleAddToCart}
                 className="flex-1 flex items-center justify-center gap-2"
-                disabled={!product.inStock}
+                disabled={outOfStock}
               >
                 <ShoppingCart className="h-4 w-4" />
                 Add to Cart
