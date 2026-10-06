@@ -10,7 +10,7 @@ import {
   EmailAuthProvider,
   reauthenticateWithCredential,
 } from "firebase/auth"
-import { doc, setDoc, getDoc, updateDoc, connectFirestoreEmulator } from "firebase/firestore"
+import { doc, setDoc, getDoc, updateDoc, runTransaction, connectFirestoreEmulator } from "firebase/firestore"
 import { auth, db } from "./firebase"
 // Don't import firebase-admin in this client-side file
 
@@ -210,6 +210,34 @@ export const updateUserProfile = async (uid: string, updates: Partial<UserProfil
   } catch (error: any) {
     throw new Error(error.message)
   }
+}
+
+// Mark exactly one address as default: the first one already marked, or else
+// the first address. Fixes lists that ended up with none or several.
+export const normalizeSavedAddresses = (addresses: SavedAddress[]): SavedAddress[] => {
+  const defaultIndex = Math.max(addresses.findIndex((address) => address.isDefault), 0)
+  return addresses.map((address, index) => ({ ...address, isDefault: index === defaultIndex }))
+}
+
+// Apply a change to the user's saved addresses against the latest stored list,
+// inside a transaction, so a stale page or a second open tab can't overwrite
+// changes saved elsewhere. Returns the list that was saved.
+export const updateSavedAddresses = async (
+  uid: string,
+  change: (current: SavedAddress[]) => SavedAddress[]
+): Promise<SavedAddress[]> => {
+  const userRef = doc(db, "users", uid)
+  return runTransaction(db, async (transaction) => {
+    const snapshot = await transaction.get(userRef)
+    if (!snapshot.exists()) {
+      throw new Error("Your profile couldn't be found. Please sign out and back in, then try again.")
+    }
+
+    const current = (snapshot.data().savedAddresses ?? []) as SavedAddress[]
+    const savedAddresses = normalizeSavedAddresses(change(current))
+    transaction.update(userRef, { savedAddresses, updatedAt: new Date() })
+    return savedAddresses
+  })
 }
 
 // Firebase connectivity and health check functions

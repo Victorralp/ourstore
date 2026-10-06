@@ -34,7 +34,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
 
 export default function ProfilePage() {
-  const { user, profile, logout, updateProfile } = useAuth()
+  const { user, profile, logout, updateSavedAddresses, isLoading: authLoading } = useAuth()
   const { formatPrice } = useCurrency()
   const { toast } = useToast()
   const fullName = profile?.name || user?.displayName || ""
@@ -66,6 +66,9 @@ export default function ProfilePage() {
   // Saved addresses live on the user's Firestore profile
   const addresses: SavedAddress[] = profile?.savedAddresses ?? []
   const [savingAddresses, setSavingAddresses] = useState(false)
+  // Address changes wait until this account's profile has loaded
+  const addressesReady = !authLoading && !!user && profile?.uid === user.uid
+  const addressActionsDisabled = !addressesReady || savingAddresses
 
   // Address dialog state
   const [addressDialogOpen, setAddressDialogOpen] = useState(false)
@@ -173,19 +176,17 @@ export default function ProfilePage() {
     setAddressDialogOpen(true)
   }
 
-  // Save the address list to the user's profile. Returns whether it worked.
-  const saveAddresses = async (updatedAddresses: SavedAddress[]) => {
-    // Keep exactly one default while there are addresses
-    let normalized = updatedAddresses
-    if (normalized.length > 0 && !normalized.some(address => address.isDefault)) {
-      normalized = normalized.map((address, index) => ({ ...address, isDefault: index === 0 }))
-    }
+  // Save a change to the user's addresses. The change is applied to the latest
+  // stored list, not this page's copy. Returns whether it worked.
+  const saveAddresses = async (change: (current: SavedAddress[]) => SavedAddress[]) => {
+    if (!addressesReady) return false
 
     setSavingAddresses(true)
     try {
-      await updateProfile({ savedAddresses: normalized })
+      await updateSavedAddresses(change)
       return true
     } catch (error: any) {
+      console.error("Failed to save addresses:", error)
       toast({
         title: "Couldn't save your addresses",
         description: error?.message || "Please try again.",
@@ -198,7 +199,8 @@ export default function ProfilePage() {
   }
 
   const handleDeleteAddress = async (id: number) => {
-    const saved = await saveAddresses(addresses.filter(address => address.id !== id))
+    // If this was the default, the first remaining address becomes the default
+    const saved = await saveAddresses(current => current.filter(address => address.id !== id))
     if (!saved) return
 
     toast({
@@ -208,7 +210,7 @@ export default function ProfilePage() {
   }
 
   const setAddressAsDefault = async (id: number) => {
-    const saved = await saveAddresses(addresses.map(address => ({
+    const saved = await saveAddresses(current => current.map(address => ({
       ...address,
       isDefault: address.id === id
     })))
@@ -232,19 +234,16 @@ export default function ProfilePage() {
       return
     }
 
-    // A new default replaces the old one
-    const others = addresses
-      .filter(address => address.id !== currentAddress?.id)
-      .map(address => addressForm.isDefault ? { ...address, isDefault: false } : address)
+    const saved = await saveAddresses(current => {
+      // A new default replaces the old one
+      const others = current.map(address =>
+        addressForm.isDefault && address.id !== addressForm.id ? { ...address, isDefault: false } : address)
 
-    // Edits stay in place; new addresses go at the end
-    const updatedAddresses = currentAddress
-      ? addresses.map(address => address.id === currentAddress.id
-          ? addressForm
-          : others.find(other => other.id === address.id) ?? address)
-      : [...others, addressForm]
-
-    const saved = await saveAddresses(updatedAddresses)
+      // Edits stay in place; new addresses, or ones deleted elsewhere meanwhile, go at the end
+      return others.some(address => address.id === addressForm.id)
+        ? others.map(address => address.id === addressForm.id ? addressForm : address)
+        : [...others, addressForm]
+    })
     if (!saved) return
 
     toast(currentAddress
@@ -637,7 +636,7 @@ export default function ProfilePage() {
             <Card>
               <CardHeader className="flex flex-row items-center justify-between">
                 <CardTitle>Saved Addresses</CardTitle>
-                <Button onClick={openAddAddressDialog}>
+                <Button onClick={openAddAddressDialog} disabled={addressActionsDisabled}>
                   <Plus className="h-4 w-4 mr-2" />
                   Add New Address
                 </Button>
@@ -651,7 +650,7 @@ export default function ProfilePage() {
                       <p className="text-muted-foreground mb-4">
                         Add a shipping address to make checkout faster.
                       </p>
-                      <Button onClick={openAddAddressDialog}>Add Address</Button>
+                      <Button onClick={openAddAddressDialog} disabled={addressActionsDisabled}>Add Address</Button>
                     </div>
                   ) : (
                     addresses.map((address) => (
@@ -676,7 +675,7 @@ export default function ProfilePage() {
                               <Button 
                                 variant="outline" 
                                 size="sm"
-                                disabled={savingAddresses}
+                                disabled={addressActionsDisabled}
                                 onClick={() => setAddressAsDefault(address.id)}
                               >
                                 Set as Default
@@ -685,21 +684,19 @@ export default function ProfilePage() {
                             <Button 
                               variant="outline" 
                               size="sm"
-                              disabled={savingAddresses}
+                              disabled={addressActionsDisabled}
                               onClick={() => openEditAddressDialog(address)}
                             >
                               Edit
                             </Button>
-                            {!address.isDefault && (
-                              <Button 
-                                variant="outline" 
-                                size="sm"
-                                disabled={savingAddresses}
-                                onClick={() => handleDeleteAddress(address.id)}
-                              >
-                                Delete
-                              </Button>
-                            )}
+                            <Button 
+                              variant="outline" 
+                              size="sm"
+                              disabled={addressActionsDisabled}
+                              onClick={() => handleDeleteAddress(address.id)}
+                            >
+                              Delete
+                            </Button>
                           </div>
                         </div>
                       </div>
@@ -710,12 +707,13 @@ export default function ProfilePage() {
             </Card>
             
             {/* Address Dialog */}
-            <Dialog open={addressDialogOpen} onOpenChange={setAddressDialogOpen}>
+            <Dialog open={addressDialogOpen} onOpenChange={(open) => !savingAddresses && setAddressDialogOpen(open)}>
               <DialogContent className="sm:max-w-[500px]">
                 <DialogHeader>
                   <DialogTitle>{currentAddress ? "Edit Address" : "Add New Address"}</DialogTitle>
                 </DialogHeader>
-                <div className="grid gap-4 py-4">
+                {/* Fields are locked while saving so nothing typed meanwhile is lost */}
+                <fieldset disabled={savingAddresses} className="grid gap-4 py-4">
                   <div className="space-y-2">
                     <Label htmlFor="addressType">Address Type</Label>
                     <RadioGroup 
@@ -847,9 +845,9 @@ export default function ProfilePage() {
                     />
                     <Label htmlFor="isDefault">Set as default address</Label>
                   </div>
-                </div>
+                </fieldset>
                 <DialogFooter>
-                  <Button variant="outline" onClick={() => setAddressDialogOpen(false)}>
+                  <Button variant="outline" onClick={() => setAddressDialogOpen(false)} disabled={savingAddresses}>
                     Cancel
                   </Button>
                   <Button onClick={handleSaveAddress} disabled={savingAddresses}>
