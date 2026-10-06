@@ -105,6 +105,9 @@ export default function CheckoutPage() {
   const profileAppliedFor = useRef<string | null>(null)
   // Set once the customer picks a state themselves, so prefill never overrides it
   const stateChosenByCustomer = useRef(false)
+  const markStateChosen = () => {
+    stateChosenByCustomer.current = true
+  }
   const [prefilledFromAddress, setPrefilledFromAddress] = useState(false)
   useEffect(() => {
     // A different account, or signing out, must never inherit the previous customer's details
@@ -511,18 +514,23 @@ export default function CheckoutPage() {
                             stateChosenByCustomer.current = true
                             handleShippingChange("state", value)
                           }}
-                          // Re-picking the current state fires no onValueChange, so treat
-                          // opening the list as the customer choosing
-                          onOpenChange={(open) => {
-                            if (open) stateChosenByCustomer.current = true
-                          }}
                         >
                           <SelectTrigger>
                             <SelectValue placeholder="Select a state" />
                           </SelectTrigger>
                           <SelectContent>
                             {NIGERIA_STATES.map((state) => (
-                              <SelectItem key={state} value={state}>
+                              <SelectItem
+                                key={state}
+                                value={state}
+                                // Re-picking the current state fires no onValueChange, so also
+                                // record the choice on the same events Radix selects an item with
+                                onPointerUp={markStateChosen}
+                                onClick={markStateChosen}
+                                onKeyDown={(event) => {
+                                  if (event.key === "Enter" || event.key === " ") markStateChosen()
+                                }}
+                              >
                                 {state}
                               </SelectItem>
                             ))}
