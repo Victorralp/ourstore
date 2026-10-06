@@ -148,7 +148,7 @@ export default function ProductGrid({ products, isLoading = false }: ProductGrid
               />
               
               {/* Wishlist button */}
-              <div className="absolute top-3 right-3 z-20">
+              <div className="absolute top-3 right-3 z-30">
                 <Button 
                   variant="ghost" 
                   size="icon" 
@@ -162,18 +162,20 @@ export default function ProductGrid({ products, isLoading = false }: ProductGrid
                 </Button>
               </div>
               
-              {/* Hover actions */}
-              <div className={`absolute inset-0 bg-black bg-opacity-20 flex items-center justify-center gap-2 transition-opacity duration-300 ${hoveredProductId === product.id ? 'opacity-100' : 'opacity-0'}`}>
+              {/* Hover actions: above the image's click layer (z-10) so the buttons can be
+                  clicked; the dimmed background lets clicks through to open quick view.
+                  Shown on hover, or when a button has keyboard focus. */}
+              <div className={`absolute inset-0 z-20 pointer-events-none bg-black bg-opacity-20 flex items-center justify-center gap-2 transition-opacity duration-300 focus-within:opacity-100 ${hoveredProductId === product.id ? 'opacity-100' : 'opacity-0'}`}>
                 <button 
                   onClick={(e) => handleProductClick(product, e)}
-                  className="w-10 h-10 rounded-full bg-white flex items-center justify-center hover:bg-green-500 hover:text-white transition-colors"
+                  className={`w-10 h-10 rounded-full bg-white flex items-center justify-center hover:bg-green-500 hover:text-white transition-colors focus-visible:pointer-events-auto ${hoveredProductId === product.id ? 'pointer-events-auto' : ''}`}
                   aria-label="View product details"
                 >
                   <Eye className="h-5 w-5" />
                 </button>
                 <button 
                   onClick={(e) => handleAddToCart(product, e)}
-                  className="w-10 h-10 rounded-full bg-white flex items-center justify-center hover:bg-green-500 hover:text-white transition-colors"
+                  className={`w-10 h-10 rounded-full bg-white flex items-center justify-center hover:bg-green-500 hover:text-white transition-colors focus-visible:pointer-events-auto ${hoveredProductId === product.id ? 'pointer-events-auto' : ''}`}
                   aria-label="Add to cart"
                   disabled={(product as any).outOfStock}
                 >
