@@ -393,11 +393,16 @@ export default function CheckoutPage() {
                                 key={state}
                                 value={state}
                                 // Re-picking the current state fires no onValueChange, so also
-                                // record the choice on the same events Radix selects an item with
-                                onPointerUp={markStateChosen}
+                                // record the choice on the events Radix selects an item with: mouse
+                                // pointerup, a touch/pen click (a scroll ending here has no click),
+                                // and Enter. Space is left out because during type-ahead it searches
+                                // rather than selects.
+                                onPointerUp={(event) => {
+                                  if (event.pointerType === "mouse") markStateChosen()
+                                }}
                                 onClick={markStateChosen}
                                 onKeyDown={(event) => {
-                                  if (event.key === "Enter" || event.key === " ") markStateChosen()
+                                  if (event.key === "Enter") markStateChosen()
                                 }}
                               >
                                 {state}
