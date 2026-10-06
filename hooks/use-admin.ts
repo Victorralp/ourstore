@@ -35,7 +35,8 @@ export function useAdmin(): UseAdminResult {
 
   // Admin if either the custom claim or the Firestore profile role says so.
   // Both are derived during render so callers never see a stale "not admin, done loading" state.
-  const roleAdmin = profile?.role === "admin"
+  // Only trust a profile that belongs to the signed-in user
+  const roleAdmin = !!user && profile?.uid === user.uid && profile.role === "admin"
   const claimsChecked = claims?.uid === user?.uid
   const claimsAdmin = claimsChecked && !!claims?.admin
 

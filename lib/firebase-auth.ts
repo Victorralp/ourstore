@@ -159,7 +159,8 @@ export const getUserProfile = async (uid: string): Promise<UserProfile | null> =
     if (userDoc.exists()) {
       const data = userDoc.data() as UserProfile
       console.log(`firebase-auth: Profile found for user ${uid}, role: ${data.role || 'undefined'}`)
-      return data
+      // Older documents may lack the uid field; callers rely on it to match the profile to the user
+      return { ...data, uid }
     } else {
       console.warn(`firebase-auth: No profile document found for user ${uid}`)
       return null
@@ -181,9 +182,14 @@ export const getUserProfile = async (uid: string): Promise<UserProfile | null> =
 }
 
 export const updateUserProfile = async (uid: string, updates: Partial<UserProfile>) => {
+  // Roles are never changed from the client
+  const safeUpdates = { ...updates }
+  delete safeUpdates.role
+  delete safeUpdates.uid
+
   try {
     await updateDoc(doc(db, "users", uid), {
-      ...updates,
+      ...safeUpdates,
       updatedAt: new Date(),
     })
   } catch (error: any) {

@@ -181,7 +181,7 @@ export default function ServiceProviderAdminDashboard() {
         console.log("User role check:", { uid: user.uid, role: userData.role })
         
         if (userData.role !== "admin") {
-          setError(`Admin access required. Current role: ${userData.role || 'user'}. Please use the Grant Admin page if this is for development.`)
+          setError(`Admin access required. Current role: ${userData.role || 'user'}. Please contact an administrator.`)
           setLoading(false)
           return
         }

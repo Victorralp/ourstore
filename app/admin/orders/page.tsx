@@ -50,6 +50,19 @@ export default function AdminOrdersPage() {
 
   useEffect(() => {
     let unsubscribe: (() => void) | undefined;
+    let cancelled = false
+
+    const showError = (err: any) => {
+      console.error("Error loading orders:", err)
+      setError(err?.message || "Failed to load orders")
+      setLoading(false)
+
+      toast({
+        title: "Error loading orders",
+        description: err?.message || "There was a problem loading orders",
+        variant: "destructive",
+      })
+    }
 
     const loadOrders = async () => {
       if (adminLoading) return
@@ -62,23 +75,19 @@ export default function AdminOrdersPage() {
       try {
         // First get initial orders
         const initialOrders = await getAllOrders(100)
+        // The page may have unmounted or lost admin access while we waited
+        if (cancelled) return
         setOrders(initialOrders)
         setLoading(false)
         
         // Then set up real-time listener
         unsubscribe = listenToAllOrders((updatedOrders) => {
           setOrders(updatedOrders)
-        }, 100)
-      } catch (err: any) {
-        console.error("Error loading orders:", err)
-        setError(err.message || "Failed to load orders")
-        setLoading(false)
-        
-        toast({
-          title: "Error loading orders",
-          description: err.message || "There was a problem loading orders",
-          variant: "destructive",
+        }, 100, (err) => {
+          if (!cancelled) showError(err)
         })
+      } catch (err: any) {
+        if (!cancelled) showError(err)
       }
     }
 
@@ -86,6 +95,7 @@ export default function AdminOrdersPage() {
 
     // Clean up listener on unmount
     return () => {
+      cancelled = true
       if (unsubscribe) {
         unsubscribe()
       }

@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import Image from "next/image"
 import Link from "next/link"
 import { Button } from "@/components/ui/button"
@@ -46,16 +46,21 @@ export default function ProfilePage() {
     gender: "",
   })
 
-  // Auth usually resolves after the first render, so fill in any blank fields once it does
+  // Auth and the Firestore profile load after the first render, so keep the form in
+  // sync with the signed-in account, and start from a clean form if the account changes
+  const accountUid = user?.uid
+  const accountEmail = user?.email || ""
+  const hydratedFor = useRef(accountUid)
   useEffect(() => {
-    if (!fullName && !user?.email) return
+    const accountChanged = hydratedFor.current !== accountUid
+    hydratedFor.current = accountUid
     setProfileData((prev) => ({
-      ...prev,
-      firstName: prev.firstName || fullName.split(" ")[0] || "",
-      lastName: prev.lastName || fullName.split(" ").slice(1).join(" "),
-      email: prev.email || user?.email || "",
+      ...(accountChanged ? { phone: "", dateOfBirth: "", gender: "" } : prev),
+      firstName: fullName.split(" ")[0] || "",
+      lastName: fullName.split(" ").slice(1).join(" "),
+      email: accountEmail,
     }))
-  }, [fullName, user?.email])
+  }, [accountUid, fullName, accountEmail])
   const [addresses, setAddresses] = useState([
     {
       id: 1,
