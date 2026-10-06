@@ -198,10 +198,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const updateProfile = async (updates: Partial<UserProfile>) => {
     if (!user) throw new Error("No authenticated user")
 
-    // Roles are never changed from the client
+    // Roles are never changed from the client, and saved addresses only change
+    // through updateSavedAddresses so concurrent edits can't overwrite each other
     const safeUpdates = { ...updates }
     delete safeUpdates.role
     delete safeUpdates.uid
+    delete safeUpdates.savedAddresses
 
     const uid = user.uid
     const { updateUserProfile } = await import("@/lib/firebase-auth")

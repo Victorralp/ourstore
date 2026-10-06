@@ -33,6 +33,10 @@ import {
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog"
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
 
+// Ids for new saved addresses: the time in milliseconds plus a random part,
+// so two windows adding an address at the same moment don't clash
+const newAddressId = () => Date.now() * 1000 + Math.floor(Math.random() * 1000)
+
 export default function ProfilePage() {
   const { user, profile, logout, updateSavedAddresses, isLoading: authLoading } = useAuth()
   const { formatPrice } = useCurrency()
@@ -56,6 +60,11 @@ export default function ProfilePage() {
   useEffect(() => {
     const accountChanged = hydratedFor.current !== accountUid
     hydratedFor.current = accountUid
+    // An open address dialog belongs to the previous account, so discard it
+    if (accountChanged) {
+      setAddressDialogOpen(false)
+      dialogAccount.current = null
+    }
     setProfileData((prev) => ({
       ...(accountChanged ? { phone: "", dateOfBirth: "", gender: "" } : prev),
       firstName: fullName.split(" ")[0] || "",
@@ -69,6 +78,8 @@ export default function ProfilePage() {
   // Address changes wait until this account's profile has loaded
   const addressesReady = !authLoading && !!user && profile?.uid === user.uid
   const addressActionsDisabled = !addressesReady || savingAddresses
+  // The account the open address dialog belongs to
+  const dialogAccount = useRef<string | null>(null)
 
   // Address dialog state
   const [addressDialogOpen, setAddressDialogOpen] = useState(false)
@@ -152,9 +163,10 @@ export default function ProfilePage() {
   }
 
   const openAddAddressDialog = () => {
+    dialogAccount.current = user?.uid ?? null
     setCurrentAddress(null)
     setAddressForm({
-      id: Date.now(), // Generate a temporary ID
+      id: newAddressId(),
       type: "Home",
       name: `${profileData.firstName} ${profileData.lastName}`.trim() || "John Doe",
       address: "",
@@ -168,6 +180,7 @@ export default function ProfilePage() {
   }
 
   const openEditAddressDialog = (address: SavedAddress) => {
+    dialogAccount.current = user?.uid ?? null
     setCurrentAddress(address)
     setAddressForm({
       ...address,
@@ -210,10 +223,15 @@ export default function ProfilePage() {
   }
 
   const setAddressAsDefault = async (id: number) => {
-    const saved = await saveAddresses(current => current.map(address => ({
-      ...address,
-      isDefault: address.id === id
-    })))
+    const saved = await saveAddresses(current => {
+      if (!current.some(address => address.id === id)) {
+        throw new Error("That address was removed in another window. Refresh the page and try again.")
+      }
+      return current.map(address => ({
+        ...address,
+        isDefault: address.id === id
+      }))
+    })
     if (!saved) return
 
     toast({
@@ -234,15 +252,40 @@ export default function ProfilePage() {
       return
     }
 
-    const saved = await saveAddresses(current => {
-      // A new default replaces the old one
-      const others = current.map(address =>
-        addressForm.isDefault && address.id !== addressForm.id ? { ...address, isDefault: false } : address)
+    // Never save a form opened for a different account
+    if (!user || dialogAccount.current !== user.uid) {
+      setAddressDialogOpen(false)
+      toast({
+        title: "Your account changed",
+        description: "Please open the address form again.",
+        variant: "destructive",
+      })
+      return
+    }
 
-      // Edits stay in place; new addresses, or ones deleted elsewhere meanwhile, go at the end
-      return others.some(address => address.id === addressForm.id)
-        ? others.map(address => address.id === addressForm.id ? addressForm : address)
-        : [...others, addressForm]
+    const editing = currentAddress
+    // Only an explicit switch to default in this dialog changes the default,
+    // so a stale form can't override a newer choice made elsewhere
+    const madeDefault = addressForm.isDefault && !editing?.isDefault
+
+    const saved = await saveAddresses(current => {
+      const others = current.map(address =>
+        madeDefault ? { ...address, isDefault: false } : address)
+
+      if (editing) {
+        const latest = current.find(address => address.id === editing.id)
+        if (!latest) {
+          throw new Error("This address was removed in another window, so your changes weren't saved.")
+        }
+        // Edits stay in place and keep the latest default flag unless made default here
+        return others.map(address => address.id === editing.id
+          ? { ...addressForm, id: editing.id, isDefault: madeDefault || latest.isDefault }
+          : address)
+      }
+
+      // New addresses go at the end, with an id that can't match an existing one
+      const id = current.some(address => address.id === addressForm.id) ? newAddressId() : addressForm.id
+      return [...others, { ...addressForm, id, isDefault: madeDefault }]
     })
     if (!saved) return
 

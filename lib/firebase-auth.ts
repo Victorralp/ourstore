@@ -175,7 +175,12 @@ export const getUserProfile = async (uid: string): Promise<UserProfile | null> =
       const data = userDoc.data() as UserProfile
       console.log(`firebase-auth: Profile found for user ${uid}, role: ${data.role || 'undefined'}`)
       // Older documents may lack the uid field; callers rely on it to match the profile to the user
-      return { ...data, uid }
+      return {
+        ...data,
+        uid,
+        // Show exactly one default even if the stored list has none or several
+        ...(data.savedAddresses ? { savedAddresses: normalizeSavedAddresses(data.savedAddresses) } : {}),
+      }
     } else {
       console.warn(`firebase-auth: No profile document found for user ${uid}`)
       return null
@@ -197,10 +202,12 @@ export const getUserProfile = async (uid: string): Promise<UserProfile | null> =
 }
 
 export const updateUserProfile = async (uid: string, updates: Partial<UserProfile>) => {
-  // Roles are never changed from the client
+  // Roles are never changed from the client, and saved addresses only change
+  // through updateSavedAddresses so concurrent edits can't overwrite each other
   const safeUpdates = { ...updates }
   delete safeUpdates.role
   delete safeUpdates.uid
+  delete safeUpdates.savedAddresses
 
   try {
     await updateDoc(doc(db, "users", uid), {
