@@ -134,8 +134,11 @@ export function useVendor() {
   const switchStore = async (storeId: string) => {
     if (!user || !vendorOwner) return
     
+    const uid = user.uid
     try {
-      await switchActiveStore(user.uid, storeId)
+      await switchActiveStore(uid, storeId)
+      // The account may have changed while this was saving
+      if (currentUid.current !== uid) return
       const newActiveStore = allStores.find(store => store.id === storeId)
       setActiveStoreState(newActiveStore || null)
       setVendorOwnerState(prev => prev ? { ...prev, activeStoreId: storeId } : null)

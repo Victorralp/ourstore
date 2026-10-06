@@ -78,7 +78,9 @@ export type Order = {
   tax: number
   total: number
   status: 'pending' | 'processing' | 'shipped' | 'delivered' | 'cancelled'
-  paymentStatus?: 'pending' | 'paid' | 'failed' | 'refunded'
+  paymentStatus?: 'pending' | 'paid' | 'failed' | 'refunded' | 'abandoned'
+  // Paid, but can't be fulfilled (sold out, or cancelled before payment): refund it
+  needsRefund?: boolean
   paymentMethod: string
   paymentId?: string
   // Name of the chosen delivery option, e.g. "Lagos Mainland 1"

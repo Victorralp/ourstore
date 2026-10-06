@@ -23,6 +23,8 @@ import {
 } from "lucide-react"
 import { useCurrency } from "@/components/currency-provider"
 import { getOrder, listenToOrder, updateOrder } from "@/lib/firebase-orders"
+import { fulfilmentBlockedReason } from "@/lib/order-fulfilment"
+import { useAdmin } from "@/hooks/use-admin"
 import { Order } from "@/types"
 import { useAuth } from "@/components/auth-provider"
 import { useToast } from "@/hooks/use-toast"
@@ -40,7 +42,8 @@ export default function OrderDetailPage() {
   const router = useRouter()
   const orderId = typeof params.id === 'string' ? params.id : ''
   const { formatPrice } = useCurrency()
-  const { user, isAdmin } = useAuth()
+  const { user } = useAuth()
+  const { isAdmin, loading: adminLoading } = useAdmin()
   const { toast } = useToast()
   const [orderDetails, setOrderDetails] = useState<Order | null>(null)
   const [loading, setLoading] = useState(true)
@@ -52,6 +55,9 @@ export default function OrderDetailPage() {
     let unsubscribe: (() => void) | undefined;
 
     const fetchOrder = async () => {
+      // Wait for the admin check, so an admin isn't turned away from a customer's order
+      if (adminLoading) return
+
       if (!orderId) {
         setLoading(false)
         setError("No order ID provided")
@@ -75,6 +81,7 @@ export default function OrderDetailPage() {
           return
         }
 
+        setError(null)
         setOrderDetails(initialOrder)
         setLoading(false)
         
@@ -99,11 +106,16 @@ export default function OrderDetailPage() {
         unsubscribe()
       }
     }
-  }, [orderId, user, isAdmin])
+  }, [orderId, user, isAdmin, adminLoading])
 
   // Function to handle order status updates (admin only)
   const handleStatusUpdate = async (newStatus: Order["status"]) => {
     if (!isAdmin || !orderDetails) return;
+    const blocked = fulfilmentBlockedReason(orderDetails, newStatus)
+    if (blocked) {
+      toast({ title: "Can't update this order", description: blocked, variant: "destructive" })
+      return
+    }
     
     setUpdating(true);
     try {
@@ -487,21 +499,21 @@ export default function OrderDetailPage() {
                   <div className="grid grid-cols-2 gap-2 w-full">
                     <Button 
                       size="sm" 
-                      disabled={updating || orderDetails.status === 'processing'} 
+                      disabled={updating || orderDetails.status === 'processing' || !!fulfilmentBlockedReason(orderDetails, 'processing')} 
                       onClick={() => handleStatusUpdate('processing')}
                     >
                       Mark Processing
                     </Button>
                     <Button 
                       size="sm" 
-                      disabled={updating || orderDetails.status === 'shipped'} 
+                      disabled={updating || orderDetails.status === 'shipped' || !!fulfilmentBlockedReason(orderDetails, 'shipped')} 
                       onClick={() => handleStatusUpdate('shipped')}
                     >
                       Mark Shipped
                     </Button>
                     <Button 
                       size="sm" 
-                      disabled={updating || orderDetails.status === 'delivered'} 
+                      disabled={updating || orderDetails.status === 'delivered' || !!fulfilmentBlockedReason(orderDetails, 'delivered')} 
                       onClick={() => handleStatusUpdate('delivered')}
                     >
                       Mark Delivered

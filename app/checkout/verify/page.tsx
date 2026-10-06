@@ -8,6 +8,7 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { useAuth } from "@/components/auth-provider"
 import { useCart } from "@/components/cart-provider"
+import { clearCheckoutAttemptId } from "@/lib/checkout-attempt"
 
 type VerifyState =
   | { kind: "checking" }
@@ -66,6 +67,8 @@ function VerifyPayment() {
     if (state.kind !== "paid" || clearedCart.current) return
     clearedCart.current = true
     removePurchasedItems(state.items)
+    // The next checkout is a new attempt
+    clearCheckoutAttemptId()
     if (!state.needsRefund) {
       router.replace(`/order-confirmation?orderId=${encodeURIComponent(state.orderId)}`)
     }

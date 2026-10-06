@@ -59,7 +59,7 @@ async function resumeAttempt(orderRef: DocumentReference, total: number) {
   }
   if (order?.paymentStatus === "pending") {
     // The first request is still starting the payment
-    return errorResponse("Your payment is already being set up. Please wait a moment and try again.", 409)
+    return errorResponse("Your payment is already being set up. Please wait a moment and try again.", 409, { code: "in_progress" })
   }
   if (order?.paymentStatus === "paid") {
     return errorResponse("This order has already been paid.", 409, { code: "already_paid", orderId: orderRef.id })

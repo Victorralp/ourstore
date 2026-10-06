@@ -25,6 +25,7 @@ import {
   BreadcrumbSeparator,
 } from "@/components/ui/breadcrumb"
 import { NIGERIA_STATES } from "@/lib/nigeria-states"
+import { clearCheckoutAttemptId, getCheckoutAttemptId } from "@/lib/checkout-attempt"
 import { lagosShippingOptions, otherShippingOptions, computeTotals, getShippingOption, roundNaira, INTERNATIONAL_OPTION_ID, type DeliveryType } from "@/lib/checkout-pricing"
 import Link from "next/link"
 import ClientOnly from "@/components/client-only"
@@ -167,10 +168,11 @@ export default function CheckoutPage() {
     })
   }, [isInternational])
 
-  // Identifies this checkout attempt, so a retry after a lost response (or a double
-  // click) gets the same order and Paystack payment instead of a second one. A new
-  // id is used after the server turns an attempt down.
-  const checkoutAttemptId = useRef<string | null>(null)
+  // Identifies this checkout attempt, so a retry after a lost response, a double
+  // click, a reload or the same checkout in another tab gets the same order and
+  // Paystack payment instead of a second one. The server derives the order from
+  // this id and the cart, so a changed cart is still a new order. A new id is used
+  // after the server turns an attempt down, or once it's paid.
 
   const handleShippingChange = (field: string, value: string) => {
     setShippingInfo((prev) => ({ ...prev, [field]: value }))
@@ -227,7 +229,7 @@ export default function CheckoutPage() {
 
       // The server builds the order from stored prices, so only ids, quantities
       // and delivery details are sent
-      checkoutAttemptId.current ??= crypto.randomUUID()
+      const attemptId = getCheckoutAttemptId()
       const token = await user.getIdToken()
       const response = await fetch("/api/payments/paystack/initialize", {
         method: "POST",
@@ -240,12 +242,13 @@ export default function CheckoutPage() {
           shippingOptionId: deliveryType === "lagos" ? lagosShippingOptionId : otherShippingOptionId,
           // The total the customer agreed to; the server won't charge anything else
           expectedTotal,
-          attemptId: checkoutAttemptId.current,
+          attemptId,
         }),
       })
       const result = await response.json().catch(() => null)
-      // Turned down (or nothing created): the next try is a new attempt
-      if (!response.ok) checkoutAttemptId.current = null
+      // Turned down (or nothing created): the next try is a new attempt. Not while
+      // the first request is still starting the payment, so a retry can resume it.
+      if (!response.ok && result?.code !== "in_progress") clearCheckoutAttemptId()
 
       // Prices changed: show the new total and let the customer decide
       if (response.status === 409 && result?.code === "total_changed" && typeof result.total === "number") {
