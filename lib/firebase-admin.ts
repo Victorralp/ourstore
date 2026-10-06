@@ -21,6 +21,16 @@ export const getFirebaseAdminApp = () => {
   return firebaseAdmin.app();
 };
 
+// Whether the service account credentials needed for trusted server-side reads
+// and writes (such as confirming payments) are set
+export const isFirebaseAdminConfigured = () =>
+  !!process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID &&
+  !!process.env.FIREBASE_ADMIN_CLIENT_EMAIL &&
+  !!process.env.FIREBASE_ADMIN_PRIVATE_KEY
+
+// Firestore with admin privileges; bypasses security rules, so server-side only
+export const adminDb = () => firebaseAdmin.firestore(getFirebaseAdminApp())
+
 // Export Firebase Admin auth for server-side auth functions
 export const auth = () => {
   const app = getFirebaseAdminApp();

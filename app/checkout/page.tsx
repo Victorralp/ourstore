@@ -24,8 +24,8 @@ import {
   BreadcrumbPage,
   BreadcrumbSeparator,
 } from "@/components/ui/breadcrumb"
-import { createOrder } from "@/lib/firebase-orders"
 import { NIGERIA_STATES } from "@/lib/nigeria-states"
+import { lagosShippingOptions, otherShippingOptions, VAT_RATE, roundNaira } from "@/lib/checkout-pricing"
 import Link from "next/link"
 import ClientOnly from "@/components/client-only"
 
@@ -35,25 +35,7 @@ import ClientOnly from "@/components/client-only"
 const formatNaira = (amount: number) => new Intl.NumberFormat("en-NG", { style: "currency", currency: "NGN", maximumFractionDigits: 2 }).format(amount)
 
 
-const lagosShippingOptions = [
-  { id: 'lagos-mainland-1', name: 'Lagos Mainland 1', price: 1500, description: 'Allen Avenue, Opebi, Toyin Ikeja' },
-  { id: 'lagos-mainland-2', name: 'Lagos Mainland 2', price: 2000, description: 'Computer village, Alausa, Oregun Ikeja' },
-  { id: 'lagos-mainland-3', name: 'Lagos Mainland 3', price: 3000, description: 'Omole phase 1 & 2, Magodo, Ogudu, Ojota, Oko oba, Agege' },
-  { id: 'lagos-mainland-4', name: 'Lagos Mainland 4', price: 3500, description: 'Surulere, Yaba, Bariga, Gbagada, Ajao estate, Anthony, Ikosi, Ketu, Iju ishaga, Oshodi, Maryland, Mushin, Ilupeju' },
-  { id: 'lagos-mainland-5', name: 'Lagos Mainland 5', price: 4500, description: 'Iyana ipaja, Ikotun, Egbeda, Abule Egba, Amuwo odofin, Igando, Festac, Meiran, Ayobo, Ago palace way, Satellite town, idimu, Ijaiye, Ejigbo' },
-  { id: 'lagos-mainland-6', name: 'Lagos Mainland 6', price: 5000, description: 'Ojokoro, Ikorodu, Akute, Alagbado' },
-  { id: 'lagos-island-1', name: 'Lagos Island 1', price: 4500, description: 'Eko idumota, IKOYI, Victoria island, Oniru' },
-  { id: 'lagos-island-2', name: 'Lagos Island 2', price: 4500, description: 'Lekki, Agungi, Ikate, Ologolo' },
-  { id: 'lagos-island-3', name: 'Lagos Island 3', price: 3000, description: 'CHEVRON, VGC, ORCHID, IKOTA, AJAH, IGBO-EFON' },
-  { id: 'sangotedo', name: 'Sangotedo', price: 2000, description: '' },
-  { id: 'abijo-awoyaya', name: 'Abijo/Awoyaya', price: 3000, description: '' },
-];
 
-const otherShippingOptions = [
-  { id: 'gig-logistics', name: 'GIG Logistics', price: 6000, description: "Tracked delivery outside Lagos. 3-5 working days. Price may be higher for orders over 2kg." },
-  { id: 'international-delivery', name: 'International Delivery', price: 3000, description: "Outside Nigeria. Price determined by weight. Agent will contact you." },
-  { id: 'bus-park-delivery', name: 'Bus Park Delivery', price: 1000, description: '' },
-];
 
 const emptyShippingInfo = {
   firstName: "",
@@ -77,12 +59,6 @@ const emptyBillingInfo = {
   country: "Nigeria",
 }
 
-const emptyPaymentInfo = {
-  cardNumber: "",
-  expiryDate: "",
-  cvv: "",
-  nameOnCard: "",
-}
 
 export default function CheckoutPage() {
   const router = useRouter()
@@ -96,7 +72,6 @@ export default function CheckoutPage() {
   const [isProcessing, setIsProcessing] = useState(false)
   const [shippingInfo, setShippingInfo] = useState(emptyShippingInfo)
   const [billingInfo, setBillingInfo] = useState(emptyBillingInfo)
-  const [paymentInfo, setPaymentInfo] = useState(emptyPaymentInfo)
 
   // Prefill shipping info after mount (avoids an SSR/CSR mismatch): the default saved
   // address first, then the account's name, email and phone. Only empty fields are
@@ -114,7 +89,6 @@ export default function CheckoutPage() {
     if (prefilledFor.current && prefilledFor.current !== user?.uid) {
       setShippingInfo(emptyShippingInfo)
       setBillingInfo(emptyBillingInfo)
-      setPaymentInfo(emptyPaymentInfo)
       setPrefilledFromAddress(false)
       prefilledFor.current = null
       profileAppliedFor.current = null
@@ -161,16 +135,15 @@ export default function CheckoutPage() {
   const [deliveryType, setDeliveryType] = useState('lagos');
   const [lagosShippingOptionId, setLagosShippingOptionId] = useState(lagosShippingOptions[0].id);
   const [otherShippingOptionId, setOtherShippingOptionId] = useState(otherShippingOptions[0].id);
-  const [paymentMethod, setPaymentMethod] = useState("card")
   const [sameAsShipping, setSameAsShipping] = useState(true)
 
   const subtotal = getTotalPrice()
   const shippingCost = deliveryType === 'lagos' 
     ? lagosShippingOptions.find(option => option.id === lagosShippingOptionId)?.price || 0
     : otherShippingOptions.find(option => option.id === otherShippingOptionId)?.price || 0;
-  // VAT = 2.5% of subtotal
-  const tax = subtotal * 0.025
-  const total = subtotal + shippingCost + tax
+  // Shown here for the customer; the payment API recomputes the real amount from stored prices
+  const tax = roundNaira(subtotal * VAT_RATE)
+  const total = roundNaira(subtotal + shippingCost + tax)
 
   const handleShippingChange = (field: string, value: string) => {
     setShippingInfo((prev) => ({ ...prev, [field]: value }))
@@ -178,10 +151,6 @@ export default function CheckoutPage() {
 
   const handleBillingChange = (field: string, value: string) => {
     setBillingInfo((prev) => ({ ...prev, [field]: value }))
-  }
-
-  const handlePaymentChange = (field: string, value: string) => {
-    setPaymentInfo((prev) => ({ ...prev, [field]: value }))
   }
 
   const validateStep = (stepNumber: number) => {
@@ -206,13 +175,7 @@ export default function CheckoutPage() {
           billingInfo.postalCode
         )
       case 3:
-        if (paymentMethod === "card") {
-          return paymentInfo.cardNumber && paymentInfo.expiryDate && paymentInfo.cvv && paymentInfo.nameOnCard
-        }
-        if (paymentMethod === "external") {
-          // External payment method doesn't need validation
-          return true
-        }
+        // Payment details are entered on Paystack's page, not here
         return true
       default:
         return false
@@ -229,115 +192,40 @@ export default function CheckoutPage() {
           description: "Please log in to place an order.",
           variant: "destructive",
         })
+        setIsProcessing(false)
         router.push("/login?redirect=/checkout")
         return
       }
 
-      // Prepare the order data
-      const orderData = {
-        userId: user.uid,
-        items: items.map(item => ({
-          productId: item.productId,
-          name: item.name,
-          price: item.price,
-          image: item.image,
-          quantity: item.quantity,
-          options: item.options
-        })),
-        subtotal,
-        shipping: shippingCost,
-        tax,
-        total,
-        status: "pending" as const,
-        paymentStatus: "pending" as const,
-        paymentMethod: paymentMethod,
-        shippingAddress: {
-          firstName: shippingInfo.firstName,
-          lastName: shippingInfo.lastName,
-          address1: shippingInfo.address,
-          city: shippingInfo.city,
-          state: shippingInfo.state,
-          postalCode: shippingInfo.postalCode,
-          country: shippingInfo.country,
-          phone: shippingInfo.phone,
-        },
-        billingAddress: sameAsShipping
-          ? {
-              firstName: shippingInfo.firstName,
-              lastName: shippingInfo.lastName,
-              address1: shippingInfo.address,
-              city: shippingInfo.city,
-              state: shippingInfo.state,
-              postalCode: shippingInfo.postalCode,
-              country: shippingInfo.country,
-              phone: shippingInfo.phone,
-            }
-          : {
-              firstName: billingInfo.firstName,
-              lastName: billingInfo.lastName,
-              address1: billingInfo.address,
-              city: billingInfo.city,
-              postalCode: billingInfo.postalCode,
-              country: billingInfo.country,
-              phone: shippingInfo.phone,
-            },
-        estimatedDelivery: deliveryType === "lagos"
-          ? Date.now() + 2 * 24 * 60 * 60 * 1000  // 1-2 days for Lagos
-          : Date.now() + 5 * 24 * 60 * 60 * 1000, // 3-5 days for Interstate
+      // The server builds the order from stored prices, so only ids, quantities
+      // and delivery details are sent
+      const token = await user.getIdToken()
+      const response = await fetch("/api/payments/paystack/initialize", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({
+          items: items.map(item => ({ productId: item.productId, quantity: item.quantity })),
+          shipping: shippingInfo,
+          billing: sameAsShipping ? null : billingInfo,
+          deliveryType,
+          shippingOptionId: deliveryType === "lagos" ? lagosShippingOptionId : otherShippingOptionId,
+        }),
+      })
+      const result = await response.json().catch(() => null)
+      if (!response.ok || !result?.authorizationUrl) {
+        throw new Error(result?.error || "We couldn't start the payment. Please try again.")
       }
 
-      // Process payment (this would be integrated with a payment provider)
-      // For demo purposes, we're simulating a successful payment
-      // Handle different payment methods
-      if (paymentMethod === "external") {
-        // For external payment redirect, we create the order first as pending
-        // Ensure required fields for createOrder
-        (orderData as any).currency = "GBP";
-        (orderData as any).paymentStatus = "pending";
-
-        // Create the order in Firebase Realtime Database
-        const created = await createOrder(orderData as any);
-        const orderId = created?.id || created;
-
-        // For now, we redirect to the payment successful page for testing
-        // This will be replaced with the actual payment link later
-        router.push(`/payment-successful?orderId=${orderId}&amount=${total.toFixed(2)}&items=${items.length}&email=${encodeURIComponent(shippingInfo.email)}`);
-        
-        // Note: The above redirect will be replaced with your external payment link
-        // Example: router.push(`https://payment-provider.com?orderId=${orderId}&amount=${total}`);
-        
-        // Don't clear cart yet - this will be done after successful payment
-        
-      } else {
-        // Standard card payment processing
-        const paymentResult = await simulatePaymentProcessing();
-        
-        if (paymentResult.success) {
-
-          // Add payment details to order (use any-cast to satisfy type requirements)
-          (orderData as any).paymentStatus = "paid";
-          (orderData as any).paymentId = paymentResult.paymentId;
-          (orderData as any).currency = "GBP";
-
-          // Create the order in Firebase Realtime Database
-          const created = await createOrder(orderData as any);
-          const orderId = created?.id || created;
-  
-          // Clear cart
-          clearCart();
-          
-          // Show success message
-          toast({
-            title: "Order placed successfully",
-            description: "Your order has been placed and is being processed.",
-          });
-  
-                    // Redirect to payment successful page with order details
-          router.push(`/payment-successful?orderId=${orderId}&amount=${total.toFixed(2)}&items=${items.length}&email=${encodeURIComponent(shippingInfo.email)}`);
-        } else {
-          throw new Error("Payment processing failed");
-        }
+      if (Math.abs(result.total - total) > 0.01) {
+        toast({
+          title: "Your total was updated",
+          description: `Some prices have changed. You'll be charged ${formatPrice(result.total)}.`,
+        })
       }
+
+      // Pay on Paystack's page; it sends the customer back to /checkout/verify.
+      // The cart is only cleared once the payment is confirmed.
+      window.location.assign(result.authorizationUrl)
     } catch (error: any) {
       console.error("Error placing order:", error);
       toast({
@@ -345,26 +233,7 @@ export default function CheckoutPage() {
         description: error.message || "There was an error processing your order. Please try again.",
         variant: "destructive",
       });
-    } finally {
       setIsProcessing(false);
-    }
-  };
-
-  // Add a function to simulate payment processing
-  const simulatePaymentProcessing = async () => {
-    // Simulate payment processing delay
-    await new Promise(resolve => setTimeout(resolve, 2000));
-    
-    // Simulate successful payment 95% of the time
-    const isSuccessful = Math.random() < 0.95;
-    
-    if (isSuccessful) {
-      return {
-        success: true,
-        paymentId: `PAY-${Date.now()}-${Math.random().toString(36).substring(2, 10).toUpperCase()}`
-      };
-    } else {
-      throw new Error("Payment declined. Please try a different payment method.");
     }
   };
 
@@ -693,141 +562,20 @@ export default function CheckoutPage() {
                   <CardHeader>
                     <CardTitle className="flex items-center gap-2">
                       <CreditCard className="h-5 w-5" />
-                      Payment Information
+                      Payment
                     </CardTitle>
                   </CardHeader>
                   <CardContent className="space-y-4">
-                    <div>
-                      <Label className="text-base font-semibold">Payment Method</Label>
-                      <RadioGroup value={paymentMethod} onValueChange={setPaymentMethod} className="mt-3">
-                        <div className="flex items-center space-x-2 border p-3 rounded-lg">
-                          <RadioGroupItem value="card" id="card" />
-                          <Label htmlFor="card" className="flex-1 cursor-pointer">
-                            <div className="flex items-center gap-2">
-                              <CreditCard className="h-4 w-4" />
-                              <span>Credit/Debit Card</span>
-                            </div>
-                          </Label>
-                        </div>
-                        <div className="flex items-center space-x-2 border p-3 rounded-lg mt-2">
-                          <RadioGroupItem value="external" id="external" />
-                          <Label htmlFor="external" className="flex-1 cursor-pointer">
-                            <div className="flex items-center gap-2">
-                              <Lock className="h-4 w-4" />
-                              <span>Secure Direct Payment</span>
-                            </div>
-                          </Label>
-                        </div>
-                      </RadioGroup>
-                      
-                      <div className="mt-4 p-3 bg-muted rounded-lg">
-                                                <p className="text-sm mb-2">We also support additional secure payment options:</p>
-                        <div className="flex flex-wrap gap-2">
-                          <Button 
-                            variant="outline" 
-                            size="sm" 
-                            className="h-8"
-                            onClick={() => setPaymentMethod("external")}
-                          >
-                            Secure Payment
-                          </Button>
-                          <Button variant="outline" size="sm" className="h-8" disabled>
-                            {/* Additional payment links can be added here */}
-                            Coming Soon
-                          </Button>
-                        </div>
+                    <div className="flex items-start gap-3 p-4 border rounded-lg">
+                      <Lock className="h-5 w-5 mt-0.5 shrink-0" />
+                      <div>
+                        <p className="font-medium">Pay securely with Paystack</p>
+                        <p className="text-sm text-muted-foreground">
+                          After you place your order, you&apos;ll be taken to Paystack to pay by card, bank transfer
+                          or USSD. Your card details are entered on Paystack, never on this site.
+                        </p>
                       </div>
                     </div>
-
-                    {paymentMethod === "card" && (
-                      <>
-                        <div>
-                          <Label htmlFor="cardNumber">Card Number *</Label>
-                          <Input
-                            id="cardNumber"
-                            placeholder="1234 5678 9012 3456"
-                            value={paymentInfo.cardNumber}
-                            onChange={(e) => handlePaymentChange("cardNumber", e.target.value)}
-                            required
-                          />
-                        </div>
-                        <div className="grid grid-cols-2 gap-4">
-                          <div>
-                            <Label htmlFor="expiryDate">Expiry Date *</Label>
-                            <Input
-                              id="expiryDate"
-                              placeholder="MM/YY"
-                              value={paymentInfo.expiryDate}
-                              onChange={(e) => handlePaymentChange("expiryDate", e.target.value)}
-                              required
-                            />
-                          </div>
-                          <div>
-                            <Label htmlFor="cvv">CVV *</Label>
-                            <Input
-                              id="cvv"
-                              placeholder="123"
-                              value={paymentInfo.cvv}
-                              onChange={(e) => handlePaymentChange("cvv", e.target.value)}
-                              required
-                            />
-                          </div>
-                        </div>
-                        <div>
-                          <Label htmlFor="nameOnCard">Name on Card *</Label>
-                          <Input
-                            id="nameOnCard"
-                            value={paymentInfo.nameOnCard}
-                            onChange={(e) => handlePaymentChange("nameOnCard", e.target.value)}
-                            required
-                          />
-                        </div>
-                      </>
-                    )}
-                    
-                    {paymentMethod === "external" && (
-                      <div className="p-4 border rounded-lg bg-gray-50">
-                        <h3 className="text-sm font-medium text-gray-800 mb-2">External Payment Redirect</h3>
-                        <p className="text-sm text-gray-600 mb-4">
-                          After placing your order, you&apos;ll be redirected to our external payment processor.
-                        </p>
-                        
-                        <div className="p-3 bg-amber-50 border border-amber-200 rounded-md mb-4">
-                          <div className="flex gap-2 items-start">
-                            <div className="text-amber-500 mt-0.5">
-                              <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line></svg>
-                            </div>
-                            <div className="text-xs text-amber-800">
-                              <p className="font-medium">Payment link will be added later</p>
-                              <p>The system will currently redirect to the payment successful page for testing purposes.</p>
-                            </div>
-                          </div>
-                        </div>
-                        
-                        <div className="p-3 border rounded-md bg-white">
-                          <div className="flex justify-between items-center mb-3">
-                            <span className="text-sm font-medium">Order Total:</span>
-                            <span className="text-sm font-bold">{formatPrice(total)}</span>
-                          </div>
-                          <Button 
-                            className="w-full bg-green-600 hover:bg-green-700 text-white" 
-                            onClick={() => {
-                              // Generate the test order id client-side to avoid SSR/CSR mismatch
-                              const orderId = `ORDER-${Date.now()}-${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
-                              router.push(`/payment-successful?orderId=${orderId}&amount=${total.toFixed(2)}&items=${items.length}&email=${encodeURIComponent(shippingInfo.email)}`);
-                            }}
-                          >
-                            Proceed to Payment
-                          </Button>
-                        </div>
-                        
-                        <div className="mt-4 pt-3 border-t border-gray-200 text-center">
-                          <p className="text-xs text-gray-500">
-                            You’ll be able to review your order before completing payment
-                          </p>
-                        </div>
-                      </div>
-                    )}
                   </CardContent>
                 </Card>
               )}
@@ -884,17 +632,10 @@ export default function CheckoutPage() {
                     <div>
                       <h3 className="font-semibold mb-2">Payment Method</h3>
                       <div className="p-3 bg-muted rounded-lg">
-                        {paymentMethod === "card" ? (
-                          <div className="flex items-center gap-2">
-                            <CreditCard className="h-4 w-4" />
-                            <span>Credit Card ending in {paymentInfo.cardNumber.slice(-4)}</span>
-                          </div>
-                        ) : (
-                          <div className="flex items-center gap-2">
-                            <Lock className="h-4 w-4" />
-                            <span>Secure Direct Payment</span>
-                          </div>
-                        )}
+                        <div className="flex items-center gap-2">
+                          <Lock className="h-4 w-4" />
+                          <span>Paystack (card, bank transfer or USSD)</span>
+                        </div>
                       </div>
                     </div>
                   </CardContent>
