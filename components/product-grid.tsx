@@ -3,6 +3,8 @@
 import { useState, useEffect } from "react"
 import Image from "next/image"
 import Link from "next/link"
+import { isOutOfStock, unitsLeftToAdd } from "@/lib/product-stock"
+import { useToast } from "@/hooks/use-toast"
 import { Card, CardContent, CardFooter } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
@@ -22,11 +24,18 @@ export default function ProductGrid({ products, isLoading = false }: ProductGrid
   const [hoveredProductId, setHoveredProductId] = useState<string | null>(null);
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const { addToCart } = useCart();
+  const { addToCart, getCartItem } = useCart();
+  const { toast } = useToast();
   const { toggleWishlist, isInWishlist } = useWishlist();
 
   const handleAddToCart = (product: Product, e?: React.MouseEvent) => {
     if (e) e.preventDefault();
+    if (isOutOfStock(product as any)) return;
+    // Don't let the cart hold more than are in stock
+    if (unitsLeftToAdd(product as any, getCartItem(product.id)?.quantity ?? 0) < 1) {
+      toast({ title: "No more in stock", description: `All available units of ${product.name} are already in your cart.` });
+      return;
+    }
     
     const discount = (product as any).discount || 0;
     const finalPrice = discount > 0 ? product.price * (1 - discount / 100) : product.price;
@@ -110,7 +119,7 @@ export default function ProductGrid({ products, isLoading = false }: ProductGrid
                 className="absolute inset-0 z-10 cursor-pointer"
                 onClick={(e) => handleProductClick(product, e)}
               >
-                {(product as any).outOfStock && (
+                {isOutOfStock(product as any) && (
                   <div className="absolute top-4 left-0 z-20 bg-red-500 text-white text-xs font-bold px-3 py-1 rounded-r-lg shadow-md">
                     Out of Stock
                   </div>
@@ -148,7 +157,7 @@ export default function ProductGrid({ products, isLoading = false }: ProductGrid
               />
               
               {/* Wishlist button */}
-              <div className="absolute top-3 right-3 z-20">
+              <div className="absolute top-3 right-3 z-30">
                 <Button 
                   variant="ghost" 
                   size="icon" 
@@ -162,20 +171,22 @@ export default function ProductGrid({ products, isLoading = false }: ProductGrid
                 </Button>
               </div>
               
-              {/* Hover actions */}
-              <div className={`absolute inset-0 bg-black bg-opacity-20 flex items-center justify-center gap-2 transition-opacity duration-300 ${hoveredProductId === product.id ? 'opacity-100' : 'opacity-0'}`}>
+              {/* Hover actions: above the image's click layer (z-10) so the buttons can be
+                  clicked; the dimmed background lets clicks through to open quick view.
+                  Shown on hover, or when a button has keyboard focus. */}
+              <div className={`absolute inset-0 z-20 pointer-events-none bg-black bg-opacity-20 flex items-center justify-center gap-2 transition-opacity duration-300 focus-within:opacity-100 ${hoveredProductId === product.id ? 'opacity-100' : 'opacity-0'}`}>
                 <button 
                   onClick={(e) => handleProductClick(product, e)}
-                  className="w-10 h-10 rounded-full bg-white flex items-center justify-center hover:bg-green-500 hover:text-white transition-colors"
+                  className={`w-10 h-10 rounded-full bg-white flex items-center justify-center hover:bg-green-500 hover:text-white transition-colors focus-visible:pointer-events-auto ${hoveredProductId === product.id ? 'pointer-events-auto' : ''}`}
                   aria-label="View product details"
                 >
                   <Eye className="h-5 w-5" />
                 </button>
                 <button 
                   onClick={(e) => handleAddToCart(product, e)}
-                  className="w-10 h-10 rounded-full bg-white flex items-center justify-center hover:bg-green-500 hover:text-white transition-colors"
+                  className={`w-10 h-10 rounded-full bg-white flex items-center justify-center hover:bg-green-500 hover:text-white transition-colors focus-visible:pointer-events-auto ${hoveredProductId === product.id ? 'pointer-events-auto' : ''}`}
                   aria-label="Add to cart"
-                  disabled={(product as any).outOfStock}
+                  disabled={isOutOfStock(product as any)}
                 >
                   <ShoppingCart className="h-5 w-5" />
                 </button>
@@ -240,9 +251,9 @@ export default function ProductGrid({ products, isLoading = false }: ProductGrid
                 className="w-full" 
                 size="sm"
                 onClick={(e) => handleAddToCart(product, e)}
-                disabled={(product as any).outOfStock}
+                disabled={isOutOfStock(product as any)}
               >
-                {(product as any).outOfStock ? "Out of Stock" : "Add to Cart"}
+                {isOutOfStock(product as any) ? "Out of Stock" : "Add to Cart"}
               </Button>
             </CardFooter>
           </Card>
