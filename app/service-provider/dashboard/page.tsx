@@ -234,13 +234,6 @@ export default function ServiceProviderDashboard() {
               <Button variant="outline" onClick={() => window.location.reload()}>
                 Try Again
               </Button>
-              {process.env.NODE_ENV === 'development' && (
-                <Button variant="outline" asChild>
-                  <Link href="/debug/firebase">
-                    Debug Firebase
-                  </Link>
-                </Button>
-              )}
             </div>
           </CardContent>
         </Card>

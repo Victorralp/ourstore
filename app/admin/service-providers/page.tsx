@@ -300,11 +300,6 @@ export default function ServiceProviderAdminDashboard() {
                 Retry
               </Button>
               <Button variant="outline" asChild>
-                <a href="/debug/grant-admin">
-                  Grant Admin Access
-                </a>
-              </Button>
-              <Button variant="outline" asChild>
                 <a href="/login">
                   Login
                 </a>
