@@ -17,7 +17,9 @@ import {
   AlertTriangle,
   Clock,
   Truck,
-  Home
+  Home,
+  ChevronLeft,
+  ChevronRight
 } from "lucide-react"
 import { Input } from "@/components/ui/input"
 import { 
@@ -29,10 +31,15 @@ import {
 } from "@/components/ui/select"
 import { useAdmin } from "@/hooks/use-admin"
 import { useCurrency } from "@/components/currency-provider"
-import { getAllOrders, listenToAllOrders, updateOrder } from "@/lib/firebase-orders"
+import { listenToAllOrders, updateOrder } from "@/lib/firebase-orders"
 import { Order } from "@/types"
 import { useToast } from "@/hooks/use-toast"
 import { RequireAdmin } from "@/components/require-admin"
+
+// Orders shown per page
+const PAGE_SIZE = 20
+// How many more orders to fetch each time the admin pages past what's loaded
+const FETCH_STEP = 100
 
 export default function AdminOrdersPage() {
   const { isAdmin, loading: adminLoading } = useAdmin()
@@ -47,15 +54,27 @@ export default function AdminOrdersPage() {
   const [statusFilter, setStatusFilter] = useState("all")
   const [sortOrder, setSortOrder] = useState<"newest" | "oldest" | "highest" | "lowest">("newest")
   const [updating, setUpdating] = useState<string | null>(null)
+  const [page, setPage] = useState(0)
+  const [fetchLimit, setFetchLimit] = useState(FETCH_STEP)
+  const [hasMore, setHasMore] = useState(false)
+  const [loadingMore, setLoadingMore] = useState(false)
 
   useEffect(() => {
-    let unsubscribe: (() => void) | undefined;
+    if (adminLoading) return
+
+    if (!isAdmin) {
+      setLoading(false)
+      return
+    }
+
+    let unsubscribe: (() => void) | undefined
     let cancelled = false
 
     const showError = (err: any) => {
       console.error("Error loading orders:", err)
       setError(err?.message || "Failed to load orders")
       setLoading(false)
+      setLoadingMore(false)
 
       toast({
         title: "Error loading orders",
@@ -64,43 +83,42 @@ export default function AdminOrdersPage() {
       })
     }
 
-    const loadOrders = async () => {
-      if (adminLoading) return
-
-      if (!isAdmin) {
-        setLoading(false)
-        return
-      }
-
-      try {
-        // First get initial orders
-        const initialOrders = await getAllOrders(100)
-        // The page may have unmounted or lost admin access while we waited
+    // Real-time listener over the newest `fetchLimit` orders; raising the limit
+    // re-subscribes and pulls in older orders while keeping everything live
+    try {
+      unsubscribe = listenToAllOrders((updatedOrders) => {
         if (cancelled) return
-        setOrders(initialOrders)
+        setOrders(updatedOrders)
+        // A full batch means there may be older orders still to fetch
+        setHasMore(updatedOrders.length >= fetchLimit)
+        setError(null)
         setLoading(false)
-        
-        // Then set up real-time listener
-        unsubscribe = listenToAllOrders((updatedOrders) => {
-          setOrders(updatedOrders)
-        }, 100, (err) => {
-          if (!cancelled) showError(err)
-        })
-      } catch (err: any) {
+        setLoadingMore(false)
+      }, fetchLimit, (err) => {
         if (!cancelled) showError(err)
-      }
+      })
+    } catch (err: any) {
+      showError(err)
     }
 
-    loadOrders()
-
-    // Clean up listener on unmount
+    // Clean up listener on unmount or when the limit changes
     return () => {
       cancelled = true
       if (unsubscribe) {
         unsubscribe()
       }
     }
-  }, [isAdmin, adminLoading, toast])
+  }, [isAdmin, adminLoading, fetchLimit, toast])
+
+  // Start from the first page whenever the filters or sort change
+  useEffect(() => {
+    setPage(0)
+  }, [searchTerm, statusFilter, sortOrder])
+
+  const loadOlderOrders = () => {
+    setLoadingMore(true)
+    setFetchLimit((current) => current + FETCH_STEP)
+  }
 
   // Filter and sort orders
   const filteredOrders = orders
@@ -137,6 +155,20 @@ export default function AdminOrdersPage() {
         return a.total - b.total
       }
     })
+
+  const pageCount = Math.max(1, Math.ceil(filteredOrders.length / PAGE_SIZE))
+  const pageStart = page * PAGE_SIZE
+  const pageOrders = filteredOrders.slice(pageStart, pageStart + PAGE_SIZE)
+  const onLastLoadedPage = page >= pageCount - 1
+
+  const goToPage = (nextPage: number) => {
+    // Start fetching older orders once the admin reaches the last loaded page
+    if (nextPage > page && (nextPage + 1) * PAGE_SIZE >= filteredOrders.length && hasMore && !loadingMore) {
+      loadOlderOrders()
+    }
+    setPage(nextPage)
+    window.scrollTo({ top: 0, behavior: "smooth" })
+  }
 
   // Function to get status badge color
   const getStatusBadgeVariant = (status: string) => {
@@ -302,20 +334,47 @@ export default function AdminOrdersPage() {
             <p className="text-muted-foreground mb-8">
               {orders.length === 0
                 ? "There are no orders in the system."
-                : "No orders match your current filters."}
+                : hasMore
+                  ? `No orders match your current filters among the ${orders.length} most recent orders.`
+                  : "No orders match your current filters."}
             </p>
             {orders.length > 0 && (
-              <Button variant="outline" onClick={() => {
-                setSearchTerm("")
-                setStatusFilter("all")
-              }}>
-                Clear Filters
-              </Button>
+              <div className="flex flex-wrap justify-center gap-2">
+                <Button variant="outline" onClick={() => {
+                  setSearchTerm("")
+                  setStatusFilter("all")
+                }}>
+                  Clear Filters
+                </Button>
+                {hasMore && (
+                  <Button variant="outline" disabled={loadingMore} onClick={loadOlderOrders}>
+                    {loadingMore ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : null}
+                    Search older orders
+                  </Button>
+                )}
+              </div>
             )}
           </div>
         ) : (
           <div className="space-y-6">
-            {filteredOrders.map((order) => (
+            {hasMore && (
+              <p className="text-sm text-muted-foreground">
+                Search, filters and sorting cover the {orders.length} most recent orders. Go past the last page to load older ones.
+              </p>
+            )}
+            {pageOrders.length === 0 && (
+              <div className="flex items-center justify-center py-16 text-muted-foreground">
+                {loadingMore ? (
+                  <>
+                    <Loader2 className="h-6 w-6 animate-spin mr-2" />
+                    <span>Loading older orders...</span>
+                  </>
+                ) : (
+                  <span>No more orders match your current filters.</span>
+                )}
+              </div>
+            )}
+            {pageOrders.map((order) => (
               <Card key={order.id} className="overflow-hidden">
                 <CardHeader className="bg-muted/50">
                   <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
@@ -458,6 +517,39 @@ export default function AdminOrdersPage() {
                 </CardContent>
               </Card>
             ))}
+
+            {/* Pagination */}
+            <div className="flex flex-col sm:flex-row items-center justify-between gap-4 pt-2">
+              <p className="text-sm text-muted-foreground">
+                {pageOrders.length > 0
+                  ? `Showing ${pageStart + 1}–${pageStart + pageOrders.length} of ${filteredOrders.length}${hasMore ? "+" : ""} orders`
+                  : `${filteredOrders.length}${hasMore ? "+" : ""} orders`}
+              </p>
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={page === 0}
+                  onClick={() => goToPage(Math.min(page - 1, pageCount - 1))}
+                >
+                  <ChevronLeft className="h-4 w-4 mr-1" />
+                  Previous
+                </Button>
+                <span className="text-sm px-2">
+                  Page {page + 1}{hasMore ? "" : ` of ${pageCount}`}
+                </span>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  disabled={(onLastLoadedPage && !hasMore) || loadingMore}
+                  onClick={() => goToPage(page + 1)}
+                >
+                  {loadingMore ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : null}
+                  Next
+                  <ChevronRight className="h-4 w-4 ml-1" />
+                </Button>
+              </div>
+            </div>
           </div>
         )}
       </div>
