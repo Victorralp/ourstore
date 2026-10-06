@@ -21,6 +21,7 @@ interface CartContextType {
   removeFromCart: (productId: string) => void
   updateQuantity: (productId: string, quantity: number) => void
   clearCart: () => void
+  removePurchasedItems: (purchased: Array<{ productId: string; quantity: number }>) => void
   getTotalItems: () => number
   getTotalPrice: () => number
   isInCart: (productId: string) => boolean
@@ -108,6 +109,19 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
     })
   }
 
+  // After an order is paid: take out what was bought, keeping anything added or
+  // increased since (e.g. in another tab while paying)
+  const removePurchasedItems = (purchased: Array<{ productId: string; quantity: number }>) => {
+    setItems((prevItems) =>
+      prevItems.flatMap((item) => {
+        const bought = purchased.find((p) => p.productId === item.productId)
+        if (!bought) return [item]
+        const left = item.quantity - bought.quantity
+        return left > 0 ? [{ ...item, quantity: left }] : []
+      }),
+    )
+  }
+
   const getTotalItems = () => {
     // During SSR or initial hydration, return 0
     if (!isClient) return 0
@@ -140,6 +154,7 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
         removeFromCart,
         updateQuantity,
         clearCart,
+        removePurchasedItems,
         getTotalItems,
         getTotalPrice,
         isInCart,

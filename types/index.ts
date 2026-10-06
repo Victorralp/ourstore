@@ -81,6 +81,8 @@ export type Order = {
   paymentStatus?: 'pending' | 'paid' | 'failed' | 'refunded'
   paymentMethod: string
   paymentId?: string
+  // Name of the chosen delivery option, e.g. "Lagos Mainland 1"
+  shippingMethod?: string
   shippingAddress: UserAddress
   billingAddress: UserAddress
   trackingNumber?: string

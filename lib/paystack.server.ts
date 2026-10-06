@@ -19,7 +19,8 @@ export const toKobo = (naira: number) => Math.round(naira * 100)
 export interface PaystackTransaction {
   status: string // "success", "failed", "abandoned", "ongoing", "pending", ...
   reference: string
-  amount: number // kobo
+  amount: number // kobo actually paid, including any fees passed on to the customer
+  requested_amount?: number // kobo we asked Paystack to charge
   currency: string
   channel?: string
   paid_at?: string | null

@@ -31,8 +31,12 @@ export async function GET(request: Request) {
     }
 
     if (transaction.status === "success") {
-      await markOrderPaid(transaction)
-      return NextResponse.json({ status: "paid", orderId })
+      const { needsRefund } = await markOrderPaid(transaction)
+      // What was bought, so the browser removes just these from the cart
+      const items = Array.isArray(order.items)
+        ? order.items.map((item: any) => ({ productId: item.productId, quantity: item.quantity }))
+        : []
+      return NextResponse.json({ status: "paid", orderId, needsRefund, items })
     }
     if (transaction.status === "failed") {
       await markOrderPaymentFailed(orderId, reference)

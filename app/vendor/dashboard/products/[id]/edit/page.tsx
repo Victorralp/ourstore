@@ -51,7 +51,7 @@ const origins = [
 export default function EditProductPage() {
   const router = useRouter()
   const params = useParams()
-  const { vendor, loading: vendorLoading } = useVendor()
+  const { vendor, loading: vendorLoading, isApprovedVendor } = useVendor()
   const { toast } = useToast()
   const [isLoading, setIsLoading] = useState(true)
   const [isSaving, setIsSaving] = useState(false)
@@ -127,7 +127,7 @@ export default function EditProductPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!product || !vendor) return
+    if (!product || !vendor || !isApprovedVendor) return
 
     setIsSaving(true)
     try {
@@ -202,6 +202,18 @@ export default function EditProductPage() {
     return (
       <div className="text-center py-12">
         <p>Product not found</p>
+      </div>
+    )
+  }
+
+  // Only approved stores can change what they sell
+  if (!isApprovedVendor) {
+    return (
+      <div className="container mx-auto px-4 py-8 max-w-2xl">
+        <div className="rounded-lg border border-amber-200 bg-amber-50 p-4 text-amber-900">
+          <p className="font-medium">Your store is waiting for approval</p>
+          <p className="text-sm">You can edit products once an admin has approved your store.</p>
+        </div>
       </div>
     )
   }

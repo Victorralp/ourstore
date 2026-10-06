@@ -20,7 +20,7 @@ export default function VendorAddProductPage() {
   // Filter categories to only show those with subcategories
   const categories = MAIN_CATEGORIES.filter(c => c.id !== 'all' && c.subcategories && c.subcategories.length > 0)
   
-  const { vendor, activeStore } = useVendor()
+  const { vendor, activeStore, isApprovedVendor } = useVendor()
   const router = useRouter()
   const [submitting, setSubmitting] = useState(false)
   const [cloudinaryImages, setCloudinaryImages] = useState<Array<{ publicId: string; url: string; alt?: string }>>([])
@@ -51,7 +51,7 @@ export default function VendorAddProductPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!activeStore?.approved) return
+    if (!activeStore || !isApprovedVendor) return
     
     if (cloudinaryImages.length === 0) {
       alert("Please upload at least one product image.")
@@ -112,7 +112,7 @@ export default function VendorAddProductPage() {
   if (!activeStore) return <div>Loading store information...</div>
 
   // Only approved stores can list products
-  if (!activeStore.approved) {
+  if (!isApprovedVendor) {
     return (
       <div className="max-w-2xl mx-auto">
         <h1 className="text-2xl font-semibold mb-4">Add New Product</h1>

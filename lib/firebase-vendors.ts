@@ -12,6 +12,7 @@ import {
   addDoc,
   writeBatch,
   deleteDoc,
+  arrayRemove,
 } from "firebase/firestore"
 import { db } from "./firebase"
 
@@ -197,6 +198,11 @@ export const deleteVendorStore = async (ownerId: string, storeId: string) => {
     batch.update(doc(db, "orders", d.id), { vendorId: null })
     // Or to delete orders entirely, use: batch.delete(doc(db, "orders", d.id))
   }
+  // Paystack orders list their stores in vendorIds
+  const multiStoreOrdersSn = await getDocs(query(collection(db, "orders"), where("vendorIds", "array-contains", storeId)))
+  for (const d of multiStoreOrdersSn.docs) {
+    batch.update(doc(db, "orders", d.id), { vendorIds: arrayRemove(storeId) })
+  }
 
   // 4) Delete the vendor store document itself
   batch.delete(doc(db, "vendors", storeId))
@@ -204,3 +210,27 @@ export const deleteVendorStore = async (ownerId: string, storeId: string) => {
   // Commit all changes
   await batch.commit()
 } 
+
+// A store's orders and its sales from them. Paystack orders can mix stores, so
+// they list theirs in `vendorIds` and only this store's items count towards its
+// sales; older orders have a single `vendorId`. Unpaid checkouts and paid orders
+// waiting for a refund aren't sales.
+export async function getStoreOrders(storeId: string) {
+  const [single, multi] = await Promise.all([
+    getDocs(query(collection(db, "orders"), where("vendorId", "==", storeId))),
+    getDocs(query(collection(db, "orders"), where("vendorIds", "array-contains", storeId))),
+  ])
+  const byId = new Map<string, any>()
+  for (const d of [...single.docs, ...multi.docs]) byId.set(d.id, { id: d.id, ...d.data() })
+
+  const orders = [...byId.values()].filter((order) =>
+    !(order.paymentMethod === "paystack" && order.paymentStatus !== "paid") && !order.needsRefund)
+  const sales = orders.reduce((sum, order) => {
+    if (!Array.isArray(order.vendorIds)) return sum + (order.total || 0)
+    const items: any[] = Array.isArray(order.items) ? order.items : []
+    return sum + items
+      .filter((item) => item.vendorId === storeId)
+      .reduce((itemSum, item) => itemSum + (item.total || 0), 0)
+  }, 0)
+  return { orders, sales }
+}

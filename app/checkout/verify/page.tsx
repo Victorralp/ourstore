@@ -11,7 +11,7 @@ import { useCart } from "@/components/cart-provider"
 
 type VerifyState =
   | { kind: "checking" }
-  | { kind: "paid"; orderId: string }
+  | { kind: "paid"; orderId: string; needsRefund: boolean; items: Array<{ productId: string; quantity: number }> }
   | { kind: "failed"; message: string }
   | { kind: "pending"; orderId?: string }
   | { kind: "error"; message: string }
@@ -23,7 +23,7 @@ function VerifyPayment() {
   const reference = searchParams.get("reference") || searchParams.get("trxref")
   const router = useRouter()
   const { user, isLoading: authLoading } = useAuth()
-  const { clearCart } = useCart()
+  const { removePurchasedItems } = useCart()
   const [state, setState] = useState<VerifyState>({ kind: "checking" })
   const clearedCart = useRef(false)
 
@@ -38,7 +38,12 @@ function VerifyPayment() {
       const result = await response.json().catch(() => null)
 
       if (result?.status === "paid") {
-        setState({ kind: "paid", orderId: result.orderId })
+        setState({
+          kind: "paid",
+          orderId: result.orderId,
+          needsRefund: !!result.needsRefund,
+          items: Array.isArray(result.items) ? result.items : [],
+        })
       } else if (result?.status === "failed") {
         setState({ kind: "failed", message: result.error || "Your payment didn't go through." })
       } else if (result?.status === "pending") {
@@ -55,13 +60,16 @@ function VerifyPayment() {
     if (!authLoading) verify()
   }, [authLoading, verify])
 
-  // Once paid: empty the cart and show the order
+  // Once paid: take the order's items out of the cart and show the order (unless
+  // it needs a refund, in which case the customer stays here to read why)
   useEffect(() => {
     if (state.kind !== "paid" || clearedCart.current) return
     clearedCart.current = true
-    clearCart()
-    router.replace(`/order-confirmation?orderId=${encodeURIComponent(state.orderId)}`)
-  }, [state, clearCart, router])
+    removePurchasedItems(state.items)
+    if (!state.needsRefund) {
+      router.replace(`/order-confirmation?orderId=${encodeURIComponent(state.orderId)}`)
+    }
+  }, [state, removePurchasedItems, router])
 
   if (!reference) {
     return <Message icon={<XCircle className="h-10 w-10 text-red-600" />} title="No payment to check"
@@ -77,6 +85,11 @@ function VerifyPayment() {
     case "checking":
       return <Message icon={<Loader2 className="h-10 w-10 animate-spin" />} title="Confirming your payment..." text="This usually takes a few seconds." />
     case "paid":
+      if (state.needsRefund) {
+        return <Message icon={<Clock className="h-10 w-10 text-amber-600" />} title="Payment received, but we can't fulfil this order"
+          text="An item sold out before your payment completed. Your payment is safe: we'll contact you and refund it in full."
+          action={<Button asChild><Link href={`/profile/orders/${encodeURIComponent(state.orderId)}`}>View order</Link></Button>} />
+      }
       return <Message icon={<CheckCircle className="h-10 w-10 text-green-600" />} title="Payment confirmed" text="Taking you to your order..." />
     case "failed":
       return <Message icon={<XCircle className="h-10 w-10 text-red-600" />} title="Payment failed" text={state.message}

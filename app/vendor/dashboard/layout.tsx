@@ -35,18 +35,19 @@ import { KycBanner } from "@/components/kyc-banner"
 import { StoreSwitcher } from "@/components/store-switcher"
 
 export default function VendorDashboardLayout({ children }: { children: React.ReactNode }) {
-  const { vendor, activeStore, allStores, isVendor, loading } = useVendor()
+  const { vendor, activeStore, allStores, isVendor, loading, loadError, refreshStores } = useVendor()
   const { user, logout } = useAuth()
   const router = useRouter()
   const pathname = usePathname()
   const [sidebarOpen, setSidebarOpen] = useState(false)
 
   useEffect(() => {
-    // Only people who have applied for a store can use the vendor dashboard
-    if (!loading && !isVendor) {
+    // Only people who have applied for a store can use the vendor dashboard.
+    // A failed load isn't proof they have none, so don't redirect on errors.
+    if (!loading && !isVendor && !loadError) {
       router.push("/vendor/register")
     }
-  }, [isVendor, loading, router])
+  }, [isVendor, loading, loadError, router])
 
   if (loading) {
     return (
@@ -54,6 +55,17 @@ export default function VendorDashboardLayout({ children }: { children: React.Re
         <div className="text-center">
           <div className="h-8 w-8 border-4 border-t-green-500 border-l-green-600 border-r-green-600 border-b-green-700 rounded-full animate-spin mx-auto mb-4" />
           <p className="text-gray-600">Loading dashboard...</p>
+        </div>
+      </div>
+    )
+  }
+
+  if (!isVendor && loadError) {
+    return (
+      <div className="flex items-center justify-center min-h-screen bg-gray-50 px-4">
+        <div className="text-center max-w-sm">
+          <p className="text-gray-800 font-medium mb-2">{loadError}</p>
+          <Button onClick={() => refreshStores()}>Try again</Button>
         </div>
       </div>
     )

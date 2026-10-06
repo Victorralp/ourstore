@@ -275,6 +275,8 @@ export default function AdminOrdersPage() {
         return "bg-purple-100 text-purple-800";
       case 'failed':
         return "bg-red-100 text-red-800";
+      case 'abandoned':
+        return "bg-gray-100 text-gray-600";
       default:
         return "bg-yellow-100 text-yellow-800";
     }
@@ -293,6 +295,17 @@ export default function AdminOrdersPage() {
 
   // Function to update order status
   const handleStatusUpdate = async (orderId: string, newStatus: Order["status"]) => {
+    // Paystack orders can only be fulfilled once paid; cancelling is always allowed
+    const order = orders.find((o) => o.id === orderId)
+    if (order?.paymentMethod === "paystack" && order.paymentStatus !== "paid" && newStatus !== "cancelled") {
+      toast({
+        title: "Not paid yet",
+        description: "This order hasn't been paid, so it can't be processed or shipped.",
+        variant: "destructive",
+      });
+      return;
+    }
+
     setUpdating(orderId);
     try {
       const updates = {
@@ -476,6 +489,11 @@ export default function AdminOrdersPage() {
                       {order.paymentStatus && (
                         <Badge variant="secondary" className={getPaymentStatusBadgeVariant(order.paymentStatus)}>
                           {order.paymentStatus.charAt(0).toUpperCase() + order.paymentStatus.slice(1)}
+                        </Badge>
+                      )}
+                      {order.needsRefund && (
+                        <Badge variant="secondary" className="bg-red-100 text-red-800">
+                          Refund needed
                         </Badge>
                       )}
                       <span className="font-medium">{formatPrice(order.total)}</span>
