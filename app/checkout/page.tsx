@@ -103,6 +103,8 @@ export default function CheckoutPage() {
   // filled, so nothing the customer typed is overwritten.
   const prefilledFor = useRef<string | null>(null)
   const profileAppliedFor = useRef<string | null>(null)
+  // Set once the customer picks a state themselves, so prefill never overrides it
+  const stateChosenByCustomer = useRef(false)
   const [prefilledFromAddress, setPrefilledFromAddress] = useState(false)
   useEffect(() => {
     // A different account, or signing out, must never inherit the previous customer's details
@@ -113,6 +115,7 @@ export default function CheckoutPage() {
       setPrefilledFromAddress(false)
       prefilledFor.current = null
       profileAppliedFor.current = null
+      stateChosenByCustomer.current = false
     }
 
     // Wait for the profile to load so the default address isn't missed
@@ -130,8 +133,9 @@ export default function CheckoutPage() {
 
     const defaultAddress = userProfile?.savedAddresses?.find((address) => address.isDefault)
     const [firstName = "", ...otherNames] = (defaultAddress?.name || user.displayName || "").split(" ")
-    // Checkout ships within Nigeria, so only a Nigerian state can be used
-    const savedState = defaultAddress?.state && NIGERIA_STATES.includes(defaultAddress.state)
+    // Checkout ships within Nigeria, so only a Nigerian address's state can be used
+    const savedState = defaultAddress?.country === "Nigeria" && defaultAddress.state
+      && NIGERIA_STATES.includes(defaultAddress.state)
       ? defaultAddress.state
       : null
 
@@ -144,8 +148,8 @@ export default function CheckoutPage() {
       address: prev.address || defaultAddress?.address || "",
       city: prev.city || defaultAddress?.city || "",
       postalCode: prev.postalCode || defaultAddress?.postalCode || "",
-      // The state always has a value, so only replace it while it's still the default
-      state: savedState && prev.state === emptyShippingInfo.state ? savedState : prev.state,
+      // The state always has a value, so only fill it if the customer hasn't picked one
+      state: savedState && !stateChosenByCustomer.current ? savedState : prev.state,
     }))
     if (defaultAddress) {
       setPrefilledFromAddress(true)
@@ -249,6 +253,7 @@ export default function CheckoutPage() {
           lastName: shippingInfo.lastName,
           address1: shippingInfo.address,
           city: shippingInfo.city,
+          state: shippingInfo.state,
           postalCode: shippingInfo.postalCode,
           country: shippingInfo.country,
           phone: shippingInfo.phone,
@@ -259,6 +264,7 @@ export default function CheckoutPage() {
               lastName: shippingInfo.lastName,
               address1: shippingInfo.address,
               city: shippingInfo.city,
+              state: shippingInfo.state,
               postalCode: shippingInfo.postalCode,
               country: shippingInfo.country,
               phone: shippingInfo.phone,
@@ -501,7 +507,10 @@ export default function CheckoutPage() {
                         <Label htmlFor="state">State *</Label>
                         <Select
                           value={shippingInfo.state}
-                          onValueChange={(value) => handleShippingChange("state", value)}
+                          onValueChange={(value) => {
+                            stateChosenByCustomer.current = true
+                            handleShippingChange("state", value)
+                          }}
                         >
                           <SelectTrigger>
                             <SelectValue placeholder="Select a state" />
