@@ -15,6 +15,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Switch } from "@/components/ui/switch"
 import { User, Package, Heart, Settings, Bell, Shield, CreditCard, MapPin, Edit, Plus, Home, Building, Briefcase, ShoppingCart, Trash2, ExternalLink } from "lucide-react"
 import { useAuth } from "@/components/auth-provider"
+import type { SavedAddress } from "@/lib/firebase-auth"
 import { useCurrency } from "@/components/currency-provider"
 import { useToast } from "@/hooks/use-toast"
 import { useLocalStorage } from "@/hooks/use-local-storage"
@@ -32,7 +33,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group"
 
 export default function ProfilePage() {
-  const { user, profile, logout } = useAuth()
+  const { user, profile, logout, updateProfile } = useAuth()
   const { formatPrice } = useCurrency()
   const { toast } = useToast()
   const fullName = profile?.name || user?.displayName || ""
@@ -61,23 +62,14 @@ export default function ProfilePage() {
       email: accountEmail,
     }))
   }, [accountUid, fullName, accountEmail])
-  const [addresses, setAddresses] = useState([
-    {
-      id: 1,
-      type: "Home",
-      name: "John Doe",
-      address: "123 Main Street",
-      city: "London",
-      postalCode: "SW1A 1AA",
-      country: "United Kingdom",
-      isDefault: true,
-    },
-  ])
+  // Saved addresses live on the user's Firestore profile
+  const addresses: SavedAddress[] = profile?.savedAddresses ?? []
+  const [savingAddresses, setSavingAddresses] = useState(false)
 
   // Address dialog state
   const [addressDialogOpen, setAddressDialogOpen] = useState(false)
-  const [currentAddress, setCurrentAddress] = useState<any>(null)
-  const [addressForm, setAddressForm] = useState({
+  const [currentAddress, setCurrentAddress] = useState<SavedAddress | null>(null)
+  const [addressForm, setAddressForm] = useState<SavedAddress>({
     id: 0,
     type: "Home",
     name: "",
@@ -169,7 +161,7 @@ export default function ProfilePage() {
     setAddressDialogOpen(true)
   }
 
-  const openEditAddressDialog = (address: any) => {
+  const openEditAddressDialog = (address: SavedAddress) => {
     setCurrentAddress(address)
     setAddressForm({
       ...address
@@ -177,33 +169,54 @@ export default function ProfilePage() {
     setAddressDialogOpen(true)
   }
 
-  const handleDeleteAddress = (id: number) => {
-    const updatedAddresses = addresses.filter(address => address.id !== id)
-    
-    // If we deleted the default address and have other addresses, make another one default
-    if (addresses.find(a => a.id === id)?.isDefault && updatedAddresses.length > 0) {
-      updatedAddresses[0].isDefault = true
+  // Save the address list to the user's profile. Returns whether it worked.
+  const saveAddresses = async (updatedAddresses: SavedAddress[]) => {
+    // Keep exactly one default while there are addresses
+    let normalized = updatedAddresses
+    if (normalized.length > 0 && !normalized.some(address => address.isDefault)) {
+      normalized = normalized.map((address, index) => ({ ...address, isDefault: index === 0 }))
     }
-    
-    setAddresses(updatedAddresses)
+
+    setSavingAddresses(true)
+    try {
+      await updateProfile({ savedAddresses: normalized })
+      return true
+    } catch (error: any) {
+      toast({
+        title: "Couldn't save your addresses",
+        description: error?.message || "Please try again.",
+        variant: "destructive",
+      })
+      return false
+    } finally {
+      setSavingAddresses(false)
+    }
+  }
+
+  const handleDeleteAddress = async (id: number) => {
+    const saved = await saveAddresses(addresses.filter(address => address.id !== id))
+    if (!saved) return
+
     toast({
       title: "Address deleted",
       description: "The address has been removed from your account.",
     })
   }
 
-  const setAddressAsDefault = (id: number) => {
-    setAddresses(addresses.map(address => ({
+  const setAddressAsDefault = async (id: number) => {
+    const saved = await saveAddresses(addresses.map(address => ({
       ...address,
       isDefault: address.id === id
     })))
+    if (!saved) return
+
     toast({
       title: "Default address updated",
       description: "Your default address has been changed.",
     })
   }
 
-  const handleSaveAddress = () => {
+  const handleSaveAddress = async () => {
     // Validate form data
     if (!addressForm.name || !addressForm.address || !addressForm.city || !addressForm.postalCode || !addressForm.country) {
       toast({
@@ -214,32 +227,25 @@ export default function ProfilePage() {
       return
     }
 
-    // If this is an update
-    if (currentAddress) {
-      setAddresses(addresses.map(address => 
-        address.id === currentAddress.id ? addressForm : address
-      ))
-      toast({
-        title: "Address updated",
-        description: "Your address has been updated successfully."
-      })
-    } else {
-      // If setting as default, update other addresses
-      let newAddresses = [...addresses]
-      if (addressForm.isDefault) {
-        newAddresses = newAddresses.map(address => ({
-          ...address,
-          isDefault: false
-        }))
-      }
-      // Add the new address
-      setAddresses([...newAddresses, addressForm])
-      toast({
-        title: "Address added",
-        description: "Your new address has been saved successfully."
-      })
-    }
-    
+    // A new default replaces the old one
+    const others = addresses
+      .filter(address => address.id !== currentAddress?.id)
+      .map(address => addressForm.isDefault ? { ...address, isDefault: false } : address)
+
+    // Edits stay in place; new addresses go at the end
+    const updatedAddresses = currentAddress
+      ? addresses.map(address => address.id === currentAddress.id
+          ? addressForm
+          : others.find(other => other.id === address.id) ?? address)
+      : [...others, addressForm]
+
+    const saved = await saveAddresses(updatedAddresses)
+    if (!saved) return
+
+    toast(currentAddress
+      ? { title: "Address updated", description: "Your address has been updated successfully." }
+      : { title: "Address added", description: "Your new address has been saved successfully." })
+
     // Close the dialog
     setAddressDialogOpen(false)
   }
@@ -665,6 +671,7 @@ export default function ProfilePage() {
                               <Button 
                                 variant="outline" 
                                 size="sm"
+                                disabled={savingAddresses}
                                 onClick={() => setAddressAsDefault(address.id)}
                               >
                                 Set as Default
@@ -673,6 +680,7 @@ export default function ProfilePage() {
                             <Button 
                               variant="outline" 
                               size="sm"
+                              disabled={savingAddresses}
                               onClick={() => openEditAddressDialog(address)}
                             >
                               Edit
@@ -681,6 +689,7 @@ export default function ProfilePage() {
                               <Button 
                                 variant="outline" 
                                 size="sm"
+                                disabled={savingAddresses}
                                 onClick={() => handleDeleteAddress(address.id)}
                               >
                                 Delete
@@ -805,8 +814,8 @@ export default function ProfilePage() {
                   <Button variant="outline" onClick={() => setAddressDialogOpen(false)}>
                     Cancel
                   </Button>
-                  <Button onClick={handleSaveAddress}>
-                    {currentAddress ? "Update Address" : "Save Address"}
+                  <Button onClick={handleSaveAddress} disabled={savingAddresses}>
+                    {savingAddresses ? "Saving..." : currentAddress ? "Update Address" : "Save Address"}
                   </Button>
                 </DialogFooter>
               </DialogContent>

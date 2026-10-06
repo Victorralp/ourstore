@@ -14,6 +14,18 @@ import { doc, setDoc, getDoc, updateDoc, connectFirestoreEmulator } from "fireba
 import { auth, db } from "./firebase"
 // Don't import firebase-admin in this client-side file
 
+// An address the user saved on their profile page
+export interface SavedAddress {
+  id: number
+  type: string
+  name: string
+  address: string
+  city: string
+  postalCode: string
+  country: string
+  isDefault: boolean
+}
+
 export interface UserProfile {
   uid: string
   email: string
@@ -31,6 +43,7 @@ export interface UserProfile {
     language: string
     notifications: boolean
   }
+  savedAddresses?: SavedAddress[]
   role?: "admin" | "user" | "vendor"
   createdAt: Date
   updatedAt: Date
