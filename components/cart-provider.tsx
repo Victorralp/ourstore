@@ -13,6 +13,8 @@ export interface CartItem {
   price: number
   image: string
   quantity: number
+  // The product's stock when it was added; the cart never holds more than this
+  maxQuantity?: number
 }
 
 interface CartContextType {
@@ -70,24 +72,27 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
     };
   }, [setItems]);
 
-  const addToCart = (item: CartItem, maxTotal = Infinity) => {
+  const addToCart = (item: CartItem, maxTotal?: number) => {
     // Checked inside the update, against the cart as stored now (which includes
     // adds made moments ago or in another tab), so quick repeated adds can't
-    // take the cart past the stock
+    // take the cart past the stock. When the caller doesn't know the stock (e.g.
+    // adding from the wishlist), the limit saved with the cart item applies.
     setItems((prevItems) => {
       const existingItem = prevItems.find((i) => i.productId === item.productId)
-      const quantity = Math.min((existingItem?.quantity ?? 0) + item.quantity, maxTotal)
+      const limit = maxTotal ?? item.maxQuantity ?? existingItem?.maxQuantity
+      const quantity = Math.min((existingItem?.quantity ?? 0) + item.quantity, limit ?? Infinity)
 
       if (existingItem) {
-        if (quantity <= existingItem.quantity) return prevItems
+        // A lower limit than before (stock went down) also brings the quantity down
+        if (quantity === existingItem.quantity && limit === existingItem.maxQuantity) return prevItems
         return prevItems.map((i) => 
           i.productId === item.productId 
-            ? { ...i, quantity } 
+            ? { ...i, quantity, maxQuantity: limit } 
             : i
         )
       } else {
         if (quantity < 1) return prevItems
-        return [...prevItems, { ...item, quantity }]
+        return [...prevItems, { ...item, quantity, maxQuantity: limit }]
       }
     })
   }
@@ -104,7 +109,9 @@ export function CartProvider({ children }: { children: React.ReactNode }) {
 
     setItems((prevItems) => {
       return prevItems.map((item) =>
-        item.productId === productId ? { ...item, quantity } : item,
+        item.productId === productId
+          ? { ...item, quantity: Math.min(quantity, item.maxQuantity ?? Infinity) }
+          : item,
       )
     })
   }

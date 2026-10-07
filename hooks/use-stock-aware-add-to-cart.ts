@@ -18,6 +18,9 @@ export function useStockAwareAddToCart() {
     const left = unitsLeftToAdd(product, getCartItem(product.id)?.quantity ?? 0)
     if (left < 1) {
       toast({ title: "No more in stock", description: `All available units of ${product.name} are already in your cart.` })
+      // Adds nothing, but brings a cart that holds more than the stock (stock
+      // went down since) back to the limit
+      addToCart({ ...item, quantity: 0 }, product.stockQuantity)
       return false
     }
     addToCart({ ...item, quantity: Math.min(item.quantity, left) }, product.stockQuantity)
