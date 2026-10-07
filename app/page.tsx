@@ -1,16 +1,15 @@
 "use client"
 
 import { Suspense, lazy, useEffect, useState } from "react"
-import Hero from "@/components/hero"
-import Newsletter from "@/components/newsletter"
-import { BulkOrderCTA } from "@/components/bulk-order-cta"
-import ServicesShowcase from "@/components/services-showcase"
 import { useRouter } from "next/navigation"
+import HomeHero from "@/components/home/home-hero"
+import TrustStrip from "@/components/home/trust-strip"
+import CategoryGrid from "@/components/home/category-grid"
+import HomeProducts from "@/components/home/home-products"
+import HomeStores from "@/components/home/home-stores"
+import ServicesBand from "@/components/home/services-band"
 
-// Lazy load components that are below the fold
-const FeaturedProducts = lazy(() => import("@/components/featured-products"))
-const TrendingProducts = lazy(() => import("@/components/trending-products"))
-const FeaturedStores = lazy(() => import("@/components/featured-stores"))
+// Only shown to shoppers who have viewed products, so load it lazily
 const PersonalizedRecommendations = lazy(async () => {
   const mod = await import("@/components/personalized-recommendations")
   return { default: mod.PersonalizedRecommendations }
@@ -59,32 +58,19 @@ export default function HomePage() {
   }, [router])
 
   return (
-    <main className="flex flex-col bg-white text-gray-800">
-      <div className="relative">
-        <Hero />
+    <main className="flex flex-col gap-12 bg-white pb-8 text-gray-800 md:gap-16 md:pb-12">
+      <div className="flex flex-col gap-6">
+        <HomeHero />
+        <TrustStrip />
       </div>
-      <ServicesShowcase />
-      <div className="container mx-auto px-4">
-        <Suspense fallback={<div className="py-16 text-center text-gray-600">Loading featured products...</div>}>
-          <FeaturedProducts />
-        </Suspense>
-        <Suspense fallback={<div className="py-16 text-center text-gray-600">Loading trending products...</div>}>
-          <TrendingProducts />
-        </Suspense>
-        <Suspense fallback={<div className="py-16 text-center text-gray-600">Loading featured stores...</div>}>
-          <FeaturedStores />
-        </Suspense>
-        <Suspense fallback={<div className="py-16 text-center text-gray-600">Loading recommendations...</div>}>
-          <PersonalizedRecommendations />
-        </Suspense>
-        <div className="mb-20">
-        <BulkOrderCTA />
-        </div>
-        <div id="newsletter-section">
-          <Newsletter />
-        </div>
-      </div>
-      
+      <CategoryGrid />
+      <HomeProducts />
+      <HomeStores />
+      <Suspense fallback={null}>
+        <PersonalizedRecommendations />
+      </Suspense>
+      <ServicesBand />
+
       {/* Secret message overlay */}
       {showSecretMessage && (
         <div className="fixed inset-0 flex items-center justify-center z-50 bg-black bg-opacity-50">
