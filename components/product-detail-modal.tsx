@@ -52,7 +52,7 @@ export default function ProductDetailModal({ product, isOpen, onClose }: Product
       // Never more than are left after what's already in the cart
       quantity: Math.min(quantity, maxQuantity),
       options: {}
-    })
+    }, (product as any).stockQuantity)
   }
 
   const handleToggleWishlist = () => {

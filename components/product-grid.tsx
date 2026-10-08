@@ -17,9 +17,13 @@ import { Product } from "@/types"
 interface ProductGridProps {
   products: Product[]
   isLoading?: boolean
+  // Grid columns; the shop's layout by default
+  className?: string
 }
 
-export default function ProductGrid({ products, isLoading = false }: ProductGridProps) {
+const DEFAULT_GRID = "grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6"
+
+export default function ProductGrid({ products, isLoading = false, className = DEFAULT_GRID }: ProductGridProps) {
   const [hoveredProductId, setHoveredProductId] = useState<string | null>(null);
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -71,7 +75,7 @@ export default function ProductGrid({ products, isLoading = false }: ProductGrid
 
   if (isLoading) {
     return (
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+      <div className={className}>
         {[...Array(8)].map((_, i) => (
           <div key={i} className="rounded-lg overflow-hidden border border-gray-200">
             <div className="aspect-square bg-gray-100 relative">
@@ -98,7 +102,7 @@ export default function ProductGrid({ products, isLoading = false }: ProductGrid
 
   return (
     <>
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+      <div className={className}>
         {products.map(product => (
           <Card 
             key={product.id} 

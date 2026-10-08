@@ -95,11 +95,16 @@ export default function CartPage() {
                         </button>
                         <span className="w-12 text-center font-medium">{item.quantity}</span>
                         <button
-                          className="h-8 w-8 border border-gray-300 rounded flex items-center justify-center hover:bg-gray-100"
+                          className="h-8 w-8 border border-gray-300 rounded flex items-center justify-center hover:bg-gray-100 disabled:opacity-40 disabled:cursor-not-allowed"
                           onClick={() => updateQuantity(item.productId, item.quantity + 1)}
+                          disabled={item.maxQuantity !== undefined && item.quantity >= item.maxQuantity}
+                          aria-label="Increase quantity"
                         >
                           <Plus className="h-3 w-3" />
                         </button>
+                        {item.maxQuantity !== undefined && item.quantity >= item.maxQuantity && (
+                          <span className="text-xs text-gray-500">Only {item.maxQuantity} in stock</span>
+                        )}
                       </div>
 
                       <div className="text-right">
