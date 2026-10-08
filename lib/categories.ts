@@ -189,13 +189,28 @@ export const PRODUCT_CATEGORY_TO_URL_PARAM: Record<string, string> = {
 };
 
 // Utility to normalize a category id coming from URL/search/vendor input
+// "Phones & Tablets", "phones-&-tablets" and "phones-tablets" all become "phones-tablets"
+const slugify = (value: string) =>
+  value.toLowerCase().replace(/&/g, " ").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "")
+
+// Subcategory ids (and a few other names products use) to their main category
+const SUBCATEGORY_TO_MAIN: Record<string, MainCategoryId> = {
+  ...Object.fromEntries(
+    MAIN_CATEGORIES.flatMap((category) =>
+      (category.subcategories ?? []).map((sub) => [sub.id, category.id] as [string, MainCategoryId]),
+    ),
+  ),
+  shoes: "fashion",
+}
+
 export function normalizeCategoryId(input?: string | null): MainCategoryId {
-  const id = (input || "all").toLowerCase().trim();
-  if (MAIN_CATEGORIES.some((c) => c.id === (id as MainCategoryId))) {
-    return id as MainCategoryId;
-  }
+  const raw = (input || "all").toLowerCase().trim();
+  const id = slugify(raw) || "all";
+  const main = MAIN_CATEGORIES.find((c) => c.id === id || slugify(c.name) === id);
+  if (main) return main.id;
+  if (id in SUBCATEGORY_TO_MAIN) return SUBCATEGORY_TO_MAIN[id];
   // Try legacy map
-  if (id in LEGACY_TO_MAIN_CATEGORY) return LEGACY_TO_MAIN_CATEGORY[id as keyof typeof LEGACY_TO_MAIN_CATEGORY];
+  if (raw in LEGACY_TO_MAIN_CATEGORY) return LEGACY_TO_MAIN_CATEGORY[raw as keyof typeof LEGACY_TO_MAIN_CATEGORY];
   return "others"; // Anything unknown falls under Others
 }
 
@@ -204,11 +219,17 @@ export function bucketProductToMainCategory(product: { category?: string; displa
   const cat = (product.category || "").toLowerCase().trim();
   const disp = (product.displayCategory || "").toLowerCase().trim();
 
-  // Exact match to main categories
+  if (!cat && !disp) return "others";
+
+  // Main categories, their subcategories, and their names
   const direct = normalizeCategoryId(cat);
-  if (direct !== "others" || MAIN_CATEGORIES.some((c) => c.id === (cat as MainCategoryId))) {
+  if (direct !== "all" && (direct !== "others" || MAIN_CATEGORIES.some((c) => c.id === (cat as MainCategoryId)))) {
     return direct;
   }
+
+  // Subcategories (e.g. "womens-fashion" is Fashion)
+  if (cat in SUBCATEGORY_TO_MAIN) return SUBCATEGORY_TO_MAIN[cat];
+  if (disp in SUBCATEGORY_TO_MAIN) return SUBCATEGORY_TO_MAIN[disp];
 
   // Legacy mapping
   if (cat in LEGACY_TO_MAIN_CATEGORY) return LEGACY_TO_MAIN_CATEGORY[cat];

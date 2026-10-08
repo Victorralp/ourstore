@@ -1,750 +1,431 @@
 "use client"
 
-import { useState, useEffect } from "react"
-import { useSearchParams, useRouter } from "next/navigation"
+import { Suspense, useEffect, useMemo, useState } from "react"
 import Link from "next/link"
+import { usePathname, useRouter, useSearchParams } from "next/navigation"
+import { ChevronRight, RotateCcw, Search as SearchIcon, SlidersHorizontal, X } from "lucide-react"
 import ProductGrid from "@/components/product-grid"
-import { Product } from "@/types"
-import { Loader2, Filter, ChevronDown, Search as SearchIcon, X, SlidersHorizontal, Check } from "lucide-react"
-import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
-import { products } from "@/lib/product-data"
-import { getProducts, ProductFilters } from "@/lib/firebase-products"
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-  DropdownMenuSeparator,
-  DropdownMenuLabel,
-  DropdownMenuRadioGroup,
-  DropdownMenuRadioItem,
-} from "@/components/ui/dropdown-menu"
-import { 
-  Sheet, 
-  SheetContent, 
-  SheetDescription, 
-  SheetHeader, 
-  SheetTitle, 
-  SheetTrigger,
-  SheetFooter,
-  SheetClose
-} from "@/components/ui/sheet"
-import { Badge } from "@/components/ui/badge"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { Sheet, SheetClose, SheetContent, SheetHeader, SheetTitle, SheetTrigger } from "@/components/ui/sheet"
+import { getProducts } from "@/lib/firebase-products"
+import { MAIN_CATEGORIES, bucketProductToMainCategory, normalizeCategoryId, type MainCategoryId } from "@/lib/categories"
+import { unitPrice } from "@/lib/checkout-pricing"
+import { isOutOfStock } from "@/lib/product-stock"
+import type { Product } from "@/types"
 
-// Centralized categories for consistency across the site
-import { MAIN_CATEGORIES as categories, normalizeCategoryId, bucketProductToMainCategory } from "@/lib/categories";
+const PAGE_SIZE = 24
+const GRID = "grid grid-cols-2 gap-3 sm:gap-4 md:grid-cols-3 xl:grid-cols-4"
 
-// Define price ranges
-const priceRanges = [
-  { id: "all", name: "All Prices" },
-  { id: "under10000", name: "Under ₦10,000", min: 0, max: 10000 },
-  { id: "10000to50000", name: "₦10,000 - ₦50,000", min: 10000, max: 50000 },
-  { id: "over50000", name: "Over ₦50,000", min: 50000, max: Infinity }
-];
+const PRICE_RANGES = [
+  { id: "all", name: "Any price" },
+  { id: "under-10k", name: "Under ₦10,000", min: 0, max: 10_000 },
+  { id: "10k-25k", name: "₦10,000 – ₦25,000", min: 10_000, max: 25_000 },
+  { id: "25k-50k", name: "₦25,000 – ₦50,000", min: 25_000, max: 50_000 },
+  { id: "50k-100k", name: "₦50,000 – ₦100,000", min: 50_000, max: 100_000 },
+  { id: "over-100k", name: "Over ₦100,000", min: 100_000, max: Infinity },
+] as const
 
-// Category mapping moved to centralized lib/categories.ts
+const SORT_OPTIONS = [
+  { id: "popular", name: "Most popular" },
+  { id: "newest", name: "Newest" },
+  { id: "price-asc", name: "Price: low to high" },
+  { id: "price-desc", name: "Price: high to low" },
+] as const
 
-// Add reverse mapping for product categories to URL parameters
-const productCategoryMapping: Record<string, string> = {
-  "drinks": "drinks",
-  "beverages": "drinks",
-  "flour": "flour",
-  "rice": "rice",
-  "food": "food",
-  "spices": "spices",
-  "vegetables": "vegetables",
-  "meat": "meat"
-};
+type SortId = (typeof SORT_OPTIONS)[number]["id"]
 
-// Sort options for products
-const sortOptions = [
-  { id: "popularity", name: "Popular" },
-  { id: "price-asc", name: "Price: Low to High" },
-  { id: "price-desc", name: "Price: High to Low" },
-  { id: "newest", name: "Newest" }
-];
+// What a product sells for after its discount
+const finalPrice = (product: any) =>
+  unitPrice({ price: Number(product.price) || 0, discount: typeof product.discount === "number" ? product.discount : undefined })
+
+const createdTime = (product: any) => {
+  const value = product.createdAt
+  if (!value) return 0
+  if (typeof value.toMillis === "function") return value.toMillis()
+  if (typeof value.seconds === "number") return value.seconds * 1000
+  const time = new Date(value).getTime()
+  return Number.isNaN(time) ? 0 : time
+}
+
+function ShopContent() {
+  const router = useRouter()
+  const pathname = usePathname()
+  const searchParams = useSearchParams()
+
+  // Filters live in the URL, so links (home page categories, header search,
+  // the menu) and the back button work, and results can be shared
+  const category = normalizeCategoryId(searchParams.get("category"))
+  const search = searchParams.get("search")?.trim() ?? ""
+  const priceId = PRICE_RANGES.some((r) => r.id === searchParams.get("price")) ? searchParams.get("price")! : "all"
+  const sort: SortId = SORT_OPTIONS.some((o) => o.id === searchParams.get("sort")) ? (searchParams.get("sort") as SortId) : "popular"
+  const inStockOnly = searchParams.get("instock") === "1"
+
+  const [allProducts, setAllProducts] = useState<any[]>([])
+  const [loading, setLoading] = useState(true)
+  const [failed, setFailed] = useState(false)
+  const [reloadKey, setReloadKey] = useState(0)
+  const [visible, setVisible] = useState(PAGE_SIZE)
+  const [searchInput, setSearchInput] = useState(search)
+
+  useEffect(() => setSearchInput(search), [search])
+
+  // The whole catalogue loads once; filtering and sorting happen here
+  useEffect(() => {
+    let active = true
+    setLoading(true)
+    setFailed(false)
+    getProducts({}, 1000)
+      .then(({ products }) => {
+        if (active) setAllProducts(products)
+      })
+      .catch((error) => {
+        console.error("Error loading products:", error)
+        if (active) setFailed(true)
+      })
+      .finally(() => {
+        if (active) setLoading(false)
+      })
+    return () => {
+      active = false
+    }
+  }, [reloadKey])
+
+  const updateParams = (changes: Record<string, string | null>) => {
+    const params = new URLSearchParams(searchParams.toString())
+    for (const [key, value] of Object.entries(changes)) {
+      if (value === null || value === "" || value === "all") params.delete(key)
+      else params.set(key, value)
+    }
+    // The menu's subcategory links aren't used for filtering; drop them once
+    // the shopper changes filters
+    params.delete("subcategory")
+    const query = params.toString()
+    router.replace(query ? `${pathname}?${query}` : pathname, { scroll: false })
+  }
+
+  // Start from the first page whenever the filters change
+  useEffect(() => setVisible(PAGE_SIZE), [category, search, priceId, sort, inStockOnly])
+
+  const withCategory = useMemo(
+    () => allProducts.map((product) => ({ product, bucket: bucketProductToMainCategory(product) })),
+    [allProducts],
+  )
+
+  // Everything except the category filter, so category counts reflect the other filters
+  const matchesOtherFilters = useMemo(() => {
+    const range = PRICE_RANGES.find((r) => r.id === priceId)
+    const term = search.toLowerCase()
+    return (product: any) => {
+      if (inStockOnly && isOutOfStock(product)) return false
+      if (range && "min" in range) {
+        const price = finalPrice(product)
+        if (price < range.min || price >= range.max) return false
+      }
+      if (term) {
+        const haystack = `${product.name ?? ""} ${product.description ?? ""} ${product.category ?? ""}`.toLowerCase()
+        if (!haystack.includes(term)) return false
+      }
+      return true
+    }
+  }, [priceId, search, inStockOnly])
+
+  const categoryCounts = useMemo(() => {
+    const counts: Partial<Record<MainCategoryId, number>> = {}
+    let total = 0
+    for (const { product, bucket } of withCategory) {
+      if (!matchesOtherFilters(product)) continue
+      counts[bucket] = (counts[bucket] ?? 0) + 1
+      total++
+    }
+    return { counts, total }
+  }, [withCategory, matchesOtherFilters])
+
+  const results = useMemo(() => {
+    const list = withCategory
+      .filter(({ product, bucket }) => (category === "all" || bucket === category) && matchesOtherFilters(product))
+      .map(({ product }) => product)
+
+    const byNewest = (a: any, b: any) => createdTime(b) - createdTime(a)
+    switch (sort) {
+      case "price-asc":
+        return list.sort((a, b) => finalPrice(a) - finalPrice(b))
+      case "price-desc":
+        return list.sort((a, b) => finalPrice(b) - finalPrice(a))
+      case "newest":
+        return list.sort(byNewest)
+      default:
+        // Rated and reviewed products first, then newest; sold-out items last
+        return list.sort(
+          (a, b) =>
+            Number(isOutOfStock(a)) - Number(isOutOfStock(b)) ||
+            (b.rating ?? 0) - (a.rating ?? 0) ||
+            (b.reviewCount ?? 0) - (a.reviewCount ?? 0) ||
+            byNewest(a, b),
+        )
+    }
+  }, [withCategory, category, matchesOtherFilters, sort])
+
+  const categoryName = MAIN_CATEGORIES.find((c) => c.id === category)?.name ?? "All products"
+  const title = category === "all" ? "All products" : categoryName
+  const priceName = PRICE_RANGES.find((r) => r.id === priceId)?.name
+
+  type ActiveFilter = { key: string; label: string; clear: Record<string, null> }
+  const activeFilters: ActiveFilter[] = []
+  if (category !== "all") activeFilters.push({ key: "category", label: categoryName, clear: { category: null } })
+  if (search) activeFilters.push({ key: "search", label: `“${search}”`, clear: { search: null } })
+  if (priceId !== "all") activeFilters.push({ key: "price", label: priceName ?? "Price", clear: { price: null } })
+  if (inStockOnly) activeFilters.push({ key: "instock", label: "In stock only", clear: { instock: null } })
+
+  const clearAll = () => router.replace(pathname, { scroll: false })
+
+  const categoryList = (
+    <ul className="space-y-0.5">
+      {MAIN_CATEGORIES.map((c) => {
+        const count = c.id === "all" ? categoryCounts.total : categoryCounts.counts[c.id] ?? 0
+        const selected = category === c.id
+        return (
+          <li key={c.id}>
+            <button
+              type="button"
+              onClick={() => updateParams({ category: c.id })}
+              className={`flex w-full items-center justify-between rounded-lg px-3 py-2 text-left text-sm transition-colors ${
+                selected ? "bg-green-50 font-semibold text-green-800" : "text-gray-700 hover:bg-gray-50"
+              }`}
+              aria-current={selected ? "true" : undefined}
+            >
+              <span>{c.name}</span>
+              {!loading && <span className={`text-xs ${selected ? "text-green-700" : "text-gray-400"}`}>{count}</span>}
+            </button>
+          </li>
+        )
+      })}
+    </ul>
+  )
+
+  const priceAndStock = (
+    <>
+      <fieldset>
+        <legend className="mb-2 text-sm font-semibold text-gray-900">Price</legend>
+        <div className="space-y-0.5">
+          {PRICE_RANGES.map((range) => (
+            <label
+              key={range.id}
+              className="flex cursor-pointer items-center gap-3 rounded-lg px-3 py-2 text-sm text-gray-700 hover:bg-gray-50"
+            >
+              <input
+                type="radio"
+                name="price"
+                checked={priceId === range.id}
+                onChange={() => updateParams({ price: range.id })}
+                className="h-4 w-4 accent-green-600"
+              />
+              {range.name}
+            </label>
+          ))}
+        </div>
+      </fieldset>
+      <label className="mt-4 flex cursor-pointer items-center gap-3 rounded-lg px-3 py-2 text-sm text-gray-700 hover:bg-gray-50">
+        <input
+          type="checkbox"
+          checked={inStockOnly}
+          onChange={(e) => updateParams({ instock: e.target.checked ? "1" : null })}
+          className="h-4 w-4 rounded accent-green-600"
+        />
+        In stock only
+      </label>
+    </>
+  )
+
+  return (
+    <div className="bg-gray-50/60 pb-16">
+      {/* Page header */}
+      <div className="border-b border-gray-200 bg-white">
+        <div className="container mx-auto px-4 py-6 md:py-8">
+          <nav aria-label="Breadcrumb" className="flex items-center gap-1 text-sm text-gray-500">
+            <Link href="/" className="hover:text-green-700">Home</Link>
+            <ChevronRight className="h-3.5 w-3.5" aria-hidden />
+            {category === "all" ? (
+              <span className="text-gray-900">Shop</span>
+            ) : (
+              <>
+                <button type="button" onClick={() => updateParams({ category: null })} className="hover:text-green-700">Shop</button>
+                <ChevronRight className="h-3.5 w-3.5" aria-hidden />
+                <span className="text-gray-900">{categoryName}</span>
+              </>
+            )}
+          </nav>
+          <div className="mt-3 flex flex-col gap-4 md:flex-row md:items-end md:justify-between">
+            <div>
+              <h1 className="text-2xl font-bold text-gray-900 md:text-3xl">{search ? `Results for “${search}”` : title}</h1>
+              <p className="mt-1 text-sm text-gray-500">
+                {loading ? "Loading products..." : `${results.length} ${results.length === 1 ? "product" : "products"}`}
+              </p>
+            </div>
+            <form
+              role="search"
+              className="flex w-full items-center gap-2 rounded-xl bg-gray-100 p-1 md:max-w-sm"
+              onSubmit={(e) => {
+                e.preventDefault()
+                updateParams({ search: searchInput.trim() || null })
+              }}
+            >
+              <SearchIcon className="ml-2 h-4 w-4 shrink-0 text-gray-400" aria-hidden />
+              <label htmlFor="shop-search" className="sr-only">Search products</label>
+              <input
+                id="shop-search"
+                type="search"
+                value={searchInput}
+                onChange={(e) => setSearchInput(e.target.value)}
+                placeholder="Search products"
+                className="min-w-0 flex-1 bg-transparent py-2 text-sm text-gray-900 placeholder:text-gray-400 focus:outline-none"
+              />
+              <button type="submit" className="rounded-lg bg-green-600 px-4 py-2 text-sm font-semibold text-white hover:bg-green-700">
+                Search
+              </button>
+            </form>
+          </div>
+
+          {/* Category chips: quick switching, mainly for small screens */}
+          <div className="-mx-4 mt-5 flex gap-2 overflow-x-auto px-4 pb-1 lg:hidden [scrollbar-width:none]">
+            {MAIN_CATEGORIES.map((c) => (
+              <button
+                key={c.id}
+                type="button"
+                onClick={() => updateParams({ category: c.id })}
+                className={`shrink-0 rounded-full px-4 py-1.5 text-sm font-medium ring-1 transition-colors ${
+                  category === c.id
+                    ? "bg-green-600 text-white ring-green-600"
+                    : "bg-white text-gray-700 ring-gray-200 hover:ring-green-300"
+                }`}
+              >
+                {c.id === "all" ? "All" : c.name}
+              </button>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      <div className="container mx-auto px-4 pt-6">
+        <div className="lg:grid lg:grid-cols-[240px_1fr] lg:gap-8">
+          {/* Desktop filters */}
+          <aside className="hidden lg:block">
+            <div className="sticky top-24 space-y-6 rounded-2xl bg-white p-4 ring-1 ring-gray-200">
+              <div>
+                <h2 className="mb-2 px-3 text-sm font-semibold text-gray-900">Categories</h2>
+                {categoryList}
+              </div>
+              <div className="border-t border-gray-100 pt-5">{priceAndStock}</div>
+            </div>
+          </aside>
+
+          <section aria-label="Products">
+            {/* Toolbar */}
+            <div className="mb-4 flex flex-wrap items-center gap-2">
+              <Sheet>
+                <SheetTrigger asChild>
+                  <Button variant="outline" className="gap-2 lg:hidden">
+                    <SlidersHorizontal className="h-4 w-4" /> Filters
+                    {activeFilters.filter((f) => f.key !== "category" && f.key !== "search").length > 0 && (
+                      <span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-green-600 px-1.5 text-xs text-white">
+                        {activeFilters.filter((f) => f.key !== "category" && f.key !== "search").length}
+                      </span>
+                    )}
+                  </Button>
+                </SheetTrigger>
+                <SheetContent side="left" className="w-full overflow-y-auto sm:max-w-sm">
+                  <SheetHeader className="mb-4">
+                    <SheetTitle>Filters</SheetTitle>
+                  </SheetHeader>
+                  {priceAndStock}
+                  <SheetClose asChild>
+                    <Button className="mt-6 w-full bg-green-600 hover:bg-green-700">
+                      Show {results.length} {results.length === 1 ? "product" : "products"}
+                    </Button>
+                  </SheetClose>
+                </SheetContent>
+              </Sheet>
+
+              {activeFilters.map((filter) => (
+                <button
+                  key={filter.key}
+                  type="button"
+                  onClick={() => updateParams(filter.clear)}
+                  className="inline-flex items-center gap-1 rounded-full bg-white px-3 py-1.5 text-sm text-gray-700 ring-1 ring-gray-200 hover:ring-red-200"
+                  aria-label={`Remove filter ${filter.label}`}
+                >
+                  {filter.label} <X className="h-3.5 w-3.5 text-gray-400" aria-hidden />
+                </button>
+              ))}
+              {activeFilters.length > 1 && (
+                <button type="button" onClick={clearAll} className="px-2 text-sm font-medium text-green-700 hover:text-green-800">
+                  Clear all
+                </button>
+              )}
+
+              <div className="ml-auto flex items-center gap-2">
+                <span className="hidden text-sm text-gray-500 sm:inline">Sort by</span>
+                <Select value={sort} onValueChange={(value) => updateParams({ sort: value === "popular" ? null : value })}>
+                  <SelectTrigger className="w-[170px] bg-white" aria-label="Sort products">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {SORT_OPTIONS.map((option) => (
+                      <SelectItem key={option.id} value={option.id}>{option.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+            </div>
+
+            {failed ? (
+              <div className="flex flex-col items-center rounded-2xl bg-white px-6 py-16 text-center ring-1 ring-gray-200">
+                <h2 className="text-lg font-semibold text-gray-900">We couldn&apos;t load products</h2>
+                <p className="mt-1 text-sm text-gray-500">Check your connection and try again.</p>
+                <Button onClick={() => setReloadKey((k) => k + 1)} className="mt-5 gap-2 bg-green-600 hover:bg-green-700">
+                  <RotateCcw className="h-4 w-4" /> Try again
+                </Button>
+              </div>
+            ) : loading ? (
+              <ProductGrid products={[]} isLoading className={GRID} />
+            ) : results.length === 0 ? (
+              <div className="flex flex-col items-center rounded-2xl bg-white px-6 py-16 text-center ring-1 ring-gray-200">
+                <h2 className="text-lg font-semibold text-gray-900">No products found</h2>
+                <p className="mt-1 max-w-sm text-sm text-gray-500">
+                  {activeFilters.length > 0
+                    ? "Nothing matches these filters. Try removing one, or search for something else."
+                    : "There are no products here yet."}
+                </p>
+                {activeFilters.length > 0 && (
+                  <Button onClick={clearAll} variant="outline" className="mt-5">Clear filters</Button>
+                )}
+              </div>
+            ) : (
+              <>
+                <ProductGrid products={results.slice(0, visible) as Product[]} className={GRID} />
+                <div className="mt-8 flex flex-col items-center gap-3">
+                  <p className="text-sm text-gray-500">
+                    Showing {Math.min(visible, results.length)} of {results.length}
+                  </p>
+                  {visible < results.length && (
+                    <Button variant="outline" onClick={() => setVisible((v) => v + PAGE_SIZE)} className="min-w-48 bg-white">
+                      Load more
+                    </Button>
+                  )}
+                </div>
+              </>
+            )}
+          </section>
+        </div>
+      </div>
+    </div>
+  )
+}
 
 export default function ShopPage() {
-  const searchParams = useSearchParams()
-  const router = useRouter()
-  
-  // Get category from URL or default to "all"
-  const categoryParam = normalizeCategoryId(searchParams.get("category"))
-  // Get search term from URL
-  const searchParam = searchParams.get("search") || ""
-  
-  const [selectedCategory, setSelectedCategory] = useState(categoryParam)
-  const [selectedPriceRange, setSelectedPriceRange] = useState("all")
-  const [selectedSort, setSelectedSort] = useState("popularity")
-  const [searchTerm, setSearchTerm] = useState(searchParam)
-  const [isLoading, setIsLoading] = useState(false)
-  const [filteredProducts, setFilteredProducts] = useState<Product[]>(products)
-  const [isMobileFilterOpen, setIsMobileFilterOpen] = useState(false)
-  const [activeFiltersCount, setActiveFiltersCount] = useState(0)
-  const [resultsCount, setResultsCount] = useState(products.length)
-  const [expandedSections, setExpandedSections] = useState({
-    categories: true,
-    priceRange: true,
-    sort: true
-  })
-  
-  // Calculate active filters count
-  useEffect(() => {
-    let count = 0
-    if (selectedCategory !== "all") count++
-    if (selectedPriceRange !== "all") count++
-    if (searchTerm) count++
-    setActiveFiltersCount(count)
-  }, [selectedCategory, selectedPriceRange, searchTerm])
-  
-  // Filter products based on selected filters
-  useEffect(() => {
-    setIsLoading(true)
-    
-    async function loadProducts() {
-      try {
-        // Prepare Firebase filters
-        const firebaseFilters: ProductFilters = {}
-        
-        // We'll apply category filter client-side to avoid the composite index requirement
-        const categoryFilter = selectedCategory !== "all" ? selectedCategory : null
-        
-        
-
-        try {
-          console.log("Fetching products with filters:", firebaseFilters)
-          const { products: firebaseProducts } = await getProducts(firebaseFilters)
-          console.log(`Found ${firebaseProducts.length} products from Firebase`)
-
-          // FALLBACK: If Firebase returns no products (e.g. running locally without data) use mock data
-          const baseProducts = firebaseProducts.length > 0 ? firebaseProducts : products
-
-          // Apply category filter client-side
-          let filteredFirebaseProducts = [...baseProducts]
-          if (categoryFilter) {
-            console.log("Applying category filter client-side:", categoryFilter)
-            
-            // Debug: Log category values for the first few products
-            console.log("Sample product categories:", baseProducts.slice(0, 5).map(p => ({
-              name: p.name,
-              category: p.category,
-              displayCategory: (p as any).displayCategory
-            })));
-            
-            filteredFirebaseProducts = filteredFirebaseProducts.filter((product) => {
-              // Get the category - could be either the new ID or the old string
-              const productCategory = String(product.category || "").toLowerCase().trim()
-              const categoryFilterLower = categoryFilter.toLowerCase().trim()
-              
-              // Get the displayCategory if available
-              const productDisplayCategory = String((product as any).displayCategory || "").toLowerCase().trim()
-              
-              // Bucket product to a main category for 'others' handling
-              const bucket = bucketProductToMainCategory(product as any)
-              if (categoryFilterLower === 'others') {
-                return bucket === 'others'
-              }
-
-              // More precise matching for categories
-              const exactCategoryMatch = productCategory === categoryFilterLower;
-              const exactDisplayCategoryMatch = productDisplayCategory === categoryFilterLower;
-              
-              // Special cases for drinks/beverages
-              const isDrinksCategory = 
-                categoryFilterLower === "drinks" || 
-                categoryFilterLower === "beverages";
-              
-              const productIsDrinks = 
-                productCategory === "drinks" || 
-                productCategory === "beverages" ||
-                productDisplayCategory.includes("drinks") || 
-                productDisplayCategory.includes("beverages");
-              
-              const matches = 
-                exactCategoryMatch || 
-                exactDisplayCategoryMatch ||
-                (isDrinksCategory && productIsDrinks);
-              
-              // Debug: Log detailed category matching for problematic products
-              if (
-                product.name.includes("Coca") || 
-                product.name.includes("Fanta") || 
-                product.name.includes("Rice") || 
-                productCategory === categoryFilterLower ||
-                productDisplayCategory === categoryFilterLower
-              ) {
-                console.log(`Product: ${product.name}, Category: ${productCategory}, DisplayCategory: ${productDisplayCategory}, Filter: ${categoryFilterLower}, Matches: ${matches}`);
-              }
-              
-              return matches
-            })
-            console.log(`After category filter: ${filteredFirebaseProducts.length} products`)
-          }
-
-          // Apply price range filter client-side
-          if (selectedPriceRange !== "all") {
-            const range = priceRanges.find(range => range.id === selectedPriceRange)
-            if (range && range.min !== undefined && range.max !== undefined) {
-              filteredFirebaseProducts = filteredFirebaseProducts.filter(product => {
-                // Apply discount if available
-                const finalPrice = product.discount && product.discount > 0
-                  ? product.price * (1 - product.discount / 100)
-                  : product.price
-                return finalPrice >= range.min && finalPrice < range.max
-              })
-            }
-          }
-
-          // Apply search filter client-side
-          if (searchTerm) {
-            const term = searchTerm.toLowerCase()
-            filteredFirebaseProducts = filteredFirebaseProducts.filter(product => 
-              product.name.toLowerCase().includes(term) || 
-              (product.description && product.description.toLowerCase().includes(term))
-            )
-          }
-
-          // Debug: Log sample products
-          console.log("Available products:", filteredFirebaseProducts.slice(0, 5).map(p => ({
-            name: p.name,
-            category: p.category,
-            origin: p.origin
-          })))
-
-          setResultsCount(filteredFirebaseProducts.length)
-          // Cast because Firebase Product type differs slightly from app Product type
-          setFilteredProducts(filteredFirebaseProducts as unknown as Product[])
-        } catch (error: any) {
-          console.error("Error loading products:", error)
-          
-          // Check if this is a missing index error
-          if (error.message && error.message.includes("requires an index")) {
-            console.log("Missing index error detected. Using client-side filtering with local data.")
-            // Fall back to static data and apply all filters client-side
-            let localProducts = [...products]
-            
-            // Apply category filter
-            if (selectedCategory !== "all") {
-              const mappedCategory = selectedCategory
-              localProducts = localProducts.filter((product) => {
-                const productCategory = String(product.category || "").toLowerCase().trim();
-                // Use type assertion for displayCategory
-                const productDisplayCategory = String((product as any).displayCategory || "").toLowerCase().trim();
-                const mappedLower = mappedCategory.toLowerCase().trim();
-                const selectedLower = selectedCategory.toLowerCase().trim();
-
-                // Handle 'others' bucket
-                const bucket = bucketProductToMainCategory(product as any)
-                if (selectedLower === 'others') {
-                  return bucket === 'others'
-                }
-
-                // Exact matches only
-                if (productCategory === mappedLower || productCategory === selectedLower) return true;
-                if (productDisplayCategory === mappedLower || productDisplayCategory === selectedLower) return true;
-
-                // Special case for drinks/beverages which are used interchangeably
-                if ((mappedLower === "drinks" && (productCategory === "beverages" || productDisplayCategory === "beverages")) ||
-                    (mappedLower === "beverages" && (productCategory === "drinks" || productDisplayCategory === "drinks"))) {
-                  return true;
-                }
-
-                return false;
-              })
-            }
-            
-            
-            
-            // Apply price range filter
-            if (selectedPriceRange !== "all") {
-              const range = priceRanges.find((range) => range.id === selectedPriceRange)
-              if (range && range.min !== undefined && range.max !== undefined) {
-                localProducts = localProducts.filter((product) => {
-                  const finalPrice = product.discount && product.discount > 0
-                    ? product.price * (1 - product.discount / 100)
-                    : product.price
-                  return finalPrice >= range.min && finalPrice < range.max
-                })
-              }
-            }
-            
-            // Apply search filter
-            if (searchTerm) {
-              const term = searchTerm.toLowerCase()
-              localProducts = localProducts.filter((product) =>
-                product.name.toLowerCase().includes(term) ||
-                (product.description && product.description.toLowerCase().includes(term)) ||
-                (product.category && product.category.toLowerCase().includes(term))
-              )
-            }
-            
-            // Apply sorting
-            if (selectedSort === "price-asc") {
-              localProducts.sort((a, b) => {
-                const aPrice = a.discount ? a.price * (1 - a.discount / 100) : a.price
-                const bPrice = b.discount ? b.price * (1 - b.discount / 100) : b.price
-                return aPrice - bPrice
-              })
-            } else if (selectedSort === "price-desc") {
-              localProducts.sort((a, b) => {
-                const aPrice = a.discount ? a.price * (1 - a.discount / 100) : a.price
-                const bPrice = b.discount ? b.price * (1 - b.discount / 100) : b.price
-                return bPrice - aPrice
-              })
-            } else if (selectedSort === "newest") {
-              localProducts.sort((a, b) => {
-                // Safe type checking for Date objects
-                const aDate = typeof a.createdAt === 'string' ? new Date(a.createdAt).getTime() : 0
-                const bDate = typeof b.createdAt === 'string' ? new Date(b.createdAt).getTime() : 0
-                return bDate - aDate
-              })
-            } else {
-              // Sort by popularity (default) or rating
-              localProducts.sort((a, b) => {
-                // Safe access to reviews or rating
-                const aReviews = a.reviews || []
-                const bReviews = b.reviews || []
-                // Calculate average rating if reviews exist
-                const aRating = a.rating || 0
-                const bRating = b.rating || 0
-                return bRating - aRating
-              })
-            }
-            
-            setResultsCount(localProducts.length)
-            setFilteredProducts(localProducts)
-          } else {
-            // For other errors, just use the static data without filtering
-            setFilteredProducts(products)
-            setResultsCount(products.length)
-          }
-        } finally {
-          setIsLoading(false)
-        }
-      } catch (error) {
-        console.error("Outer error handler:", error)
-        setFilteredProducts(products)
-        setResultsCount(products.length)
-        setIsLoading(false)
-      }
-    }
-    
-    loadProducts()
-  }, [selectedCategory, selectedPriceRange, searchTerm, selectedSort])
-  
-  // Update URL when filters change
-  useEffect(() => {
-    // Convert readonly search params to a regular URLSearchParams by creating 
-    // a new URLSearchParams object and passing in the entries
-    const params = new URLSearchParams();
-    
-    // Copy existing parameters
-    searchParams.forEach((value, key) => {
-      params.set(key, value);
-    });
-    
-    if (selectedCategory === "all") {
-      params.delete("category")
-    } else {
-      params.set("category", selectedCategory)
-    }
-    
-    
-    
-    if (searchTerm) {
-      params.set("search", searchTerm)
-    } else {
-      params.delete("search")
-    }
-    
-    router.replace(`/shop?${params.toString()}`)
-  }, [selectedCategory, searchTerm, router, searchParams])
-  
-  // Handle category change
-  const handleCategoryChange = (categoryId: string) => {
-    setSelectedCategory(categoryId)
-  }
-  
-  // Handle price range change
-  const handlePriceRangeChange = (rangeId: string) => {
-    setSelectedPriceRange(rangeId)
-  }
-  
-  // Handle sort change
-  const handleSortChange = (sortId: string) => {
-    setSelectedSort(sortId)
-  }
-  
-  // Handle search
-  const handleSearch = (e: React.FormEvent) => {
-    e.preventDefault()
-    // The searchTerm state is already updated via the input onChange handler
-    // The URL will be updated via the useEffect that watches searchTerm
-  }
-
-  // Clear all filters
-  const clearAllFilters = () => {
-    setSelectedCategory("all")
-    setSelectedPriceRange("all")
-    setSearchTerm("")
-  }
-
-  // Get the name of the selected category
-  const getSelectedCategoryName = () => {
-    const category = categories.find(cat => cat.id === selectedCategory)
-    return category ? category.name : "All Products"
-  }
-
-  // Get the name of the selected price range
-  const getSelectedPriceRangeName = () => {
-    const range = priceRanges.find(range => range.id === selectedPriceRange)
-    return range ? range.name : "All Prices"
-  }
-  
-  // Get the name of the selected sort option
-  const getSelectedSortName = () => {
-    const sort = sortOptions.find(sort => sort.id === selectedSort)
-    return sort ? sort.name : "Popular"
-  }
-  
-  
-  
-  // Toggle section visibility
-  const toggleSection = (section: keyof typeof expandedSections) => {
-    setExpandedSections({
-      ...expandedSections,
-      [section]: !expandedSections[section]
-    })
-  }
-  
-  // Filter component - reusable for both desktop and mobile
-  const FiltersComponent = ({ isMobile = false, onApply = () => {} }) => (
-    <div className={`${isMobile ? 'p-0' : 'bg-white rounded-lg border border-gray-200 p-4 shadow-sm sticky top-28'}`}>
-      {!isMobile && (
-        <div className="flex items-center mb-4 pb-2 border-b border-gray-200">
-          <Filter className="h-4 w-4 mr-2 text-green-600" />
-          <h2 className="font-medium text-gray-800">Filter Products</h2>
-        </div>
-      )}
-      
-      {/* Search - for mobile only */}
-      {isMobile && (
-        <div className="mb-4">
-          <h3 className="font-medium mb-2 text-sm text-gray-700">Search</h3>
-          <div className="relative">
-            <SearchIcon className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
-            <Input
-              placeholder="Search products..."
-              value={searchTerm}
-              onChange={(e) => setSearchTerm(e.target.value)}
-              className="pl-9 border-gray-300 bg-gray-50 h-9 text-gray-800 placeholder:text-gray-400"
-            />
-          </div>
-        </div>
-      )}
-      
-      {/* Category Filter - Accordion style */}
-      <div className="mb-2 border border-gray-200 rounded-md">
-        <button 
-          onClick={() => toggleSection('categories')}
-          className="w-full flex justify-between items-center p-3 text-left focus:outline-none"
-        >
-          <span className="font-medium text-gray-700">Categories</span>
-          <ChevronDown 
-            className={`h-4 w-4 text-gray-500 transition-transform ${expandedSections.categories ? 'rotate-180' : ''}`} 
-          />
-        </button>
-         
-        {expandedSections.categories && (
-          <div className="p-3 border-t border-gray-200 space-y-2 max-h-40 overflow-y-auto">
-            {categories.map((category) => (
-              <div key={category.id} className="flex items-center">
-                <input
-                  type="radio"
-                  id={`category-${category.id}`}
-                  checked={selectedCategory === category.id}
-                  onChange={() => handleCategoryChange(category.id)}
-                  className="h-4 w-4 border-gray-300 text-green-600 focus:ring-green-500 focus:ring-1 bg-white"
-                  name="category"
-                />
-                <label 
-                  htmlFor={`category-${category.id}`} 
-                  className="ml-2 text-sm text-gray-700 cursor-pointer"
-                >
-                  {category.name}
-                </label>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-      
-      {/* Price Range Filter - Accordion style */}
-      <div className="mb-2 border border-gray-200 rounded-md">
-        <button 
-          onClick={() => toggleSection('priceRange')}
-          className="w-full flex justify-between items-center p-3 text-left focus:outline-none"
-        >
-          <span className="font-medium text-gray-700">Price Range</span>
-          <ChevronDown 
-            className={`h-4 w-4 text-gray-500 transition-transform ${expandedSections.priceRange ? 'rotate-180' : ''}`} 
-          />
-        </button>
-         
-        {expandedSections.priceRange && (
-          <div className="p-3 border-t border-gray-200 space-y-2">
-            {priceRanges.map((range) => (
-              <div key={range.id} className="flex items-center">
-                <input
-                  type="radio"
-                  id={`price-${range.id}`}
-                  checked={selectedPriceRange === range.id}
-                  onChange={() => handlePriceRangeChange(range.id)}
-                  className="h-4 w-4 border-gray-300 text-green-600 focus:ring-green-500 focus:ring-1 bg-white"
-                  name="priceRange"
-                />
-                <label 
-                  htmlFor={`price-${range.id}`} 
-                  className="ml-2 text-sm text-gray-700 cursor-pointer"
-                >
-                  {range.name}
-                </label>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-      
-      
-      
-      {/* Sort By - Mobile Only */}
-      {isMobile && (
-        <div className="mb-2 border border-gray-200 rounded-md">
-          <button 
-            onClick={() => toggleSection('sort')}
-            className="w-full flex justify-between items-center p-3 text-left focus:outline-none"
-          >
-            <span className="font-medium text-gray-700">Sort By</span>
-            <ChevronDown 
-              className={`h-4 w-4 text-gray-500 transition-transform ${expandedSections.sort ? 'rotate-180' : ''}`} 
-            />
-          </button>
-           
-          {expandedSections.sort && (
-            <div className="p-3 border-t border-gray-200 space-y-2">
-              {sortOptions.map((option) => (
-                <div key={option.id} className="flex items-center">
-                  <input
-                    type="radio"
-                    id={`sort-${option.id}`}
-                    checked={selectedSort === option.id}
-                    onChange={() => handleSortChange(option.id)}
-                    className="h-4 w-4 border-gray-300 text-green-600 focus:ring-green-500 focus:ring-1 bg-white"
-                    name="sort"
-                  />
-                  <label 
-                    htmlFor={`sort-${option.id}`} 
-                    className="ml-2 text-sm text-gray-700 cursor-pointer"
-                  >
-                    {option.name}
-                  </label>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
-      
-      {/* Active Filters - Simplified */}
-      {(selectedCategory !== "all" || selectedPriceRange !== "all" || searchTerm) && (
-        <div className="mt-3 pt-2 border-t border-gray-200">
-          <div className="flex items-center justify-between mb-2">
-            <h3 className="text-xs text-gray-700">Active Filters</h3>
-            <Button 
-              variant="link" 
-              size="sm" 
-              onClick={clearAllFilters}
-              className="text-xs text-red-600 hover:text-red-700 p-0 h-auto"
-            >
-              Clear All
-            </Button>
-          </div>
-          <div className="flex flex-wrap gap-1">
-            {selectedCategory !== "all" && (
-              <Badge variant="outline" className="text-xs bg-gray-50 border-gray-200 gap-1 py-1">
-                {getSelectedCategoryName()}
-                <X className="h-3 w-3 ml-1 cursor-pointer" onClick={() => setSelectedCategory("all")} />
-              </Badge>
-            )}
-            {selectedPriceRange !== "all" && (
-              <Badge variant="outline" className="text-xs bg-gray-50 border-gray-200 gap-1 py-1">
-                {getSelectedPriceRangeName()}
-                <X className="h-3 w-3 ml-1 cursor-pointer" onClick={() => setSelectedPriceRange("all")} />
-              </Badge>
-            )}
-            
-            {searchTerm && (
-              <Badge variant="outline" className="text-xs bg-gray-50 border-gray-200 gap-1 py-1">
-                {searchTerm}
-                <X className="h-3 w-3 ml-1 cursor-pointer" onClick={() => setSearchTerm("")} />
-              </Badge>
-            )}
-          </div>
-        </div>
-      )}
-      
-      {/* Filter Actions */}
-      {isMobile ? (
-        <SheetFooter className="mt-4 pt-4 border-t border-gray-200">
-          <SheetClose asChild>
-            <Button className="w-full bg-green-600 hover:bg-green-700" onClick={onApply}>Apply Filters</Button>
-          </SheetClose>
-        </SheetFooter>
-      ) : (
-        <Button 
-          className="w-full mt-3 bg-green-600 hover:bg-green-700"
-          onClick={clearAllFilters}
-        >
-          Reset Filters
-        </Button>
-      )}
-    </div>
-  );
-  
   return (
-    <div className="min-h-screen py-8 bg-gray-50">
-      <div className="container mx-auto px-4">
-        <div className="flex flex-col md:flex-row justify-between items-start gap-4 mb-8">
-          <div>
-            <h1 className="text-3xl font-bold text-gray-900">Shop</h1>
-            <p className="text-gray-600 mt-1">Browse our wide selection of products</p>
-          </div>
-          
-          {/* Search and Sort controls */}
-          <div className="w-full md:w-auto flex flex-col md:flex-row gap-3">
-            <form onSubmit={handleSearch} className="flex w-full md:w-60">
-              <div className="relative flex-1">
-                <SearchIcon className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
-                <Input
-                  type="search"
-                  placeholder="Search products..."
-                  className="pl-9 pr-4 rounded-l-md border-r-0"
-                  value={searchTerm}
-                  onChange={(e) => setSearchTerm(e.target.value)}
-                />
-              </div>
-              <Button type="submit" className="rounded-l-none bg-green-600 hover:bg-green-700">
-                Search
-              </Button>
-            </form>
-            
-            <DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button variant="outline" className="w-full md:w-auto justify-between whitespace-nowrap">
-                  <span className="mr-1">Sort:</span> {getSelectedSortName()}
-                  <ChevronDown className="h-4 w-4 ml-2 opacity-70" />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end" className="w-56">
-                <DropdownMenuLabel>Sort By</DropdownMenuLabel>
-                <DropdownMenuSeparator />
-                <DropdownMenuRadioGroup value={selectedSort} onValueChange={handleSortChange}>
-                  {sortOptions.map((option) => (
-                    <DropdownMenuRadioItem
-                      key={option.id}
-                      value={option.id}
-                      className="cursor-pointer"
-                    >
-                      {option.name}
-                    </DropdownMenuRadioItem>
-                  ))}
-                </DropdownMenuRadioGroup>
-              </DropdownMenuContent>
-            </DropdownMenu>
-          </div>
-        </div>
-        
-        <div className="lg:grid lg:grid-cols-4 lg:gap-8">
-          {/* Mobile filter button */}
-          <div className="lg:hidden mb-4">
-            <Sheet>
-              <SheetTrigger asChild>
-                <Button 
-                  variant="outline" 
-                  className="w-full flex items-center justify-center gap-2"
-                >
-                  <SlidersHorizontal className="h-4 w-4" />
-                  <span>Filters</span>
-                  {activeFiltersCount > 0 && (
-                    <Badge className="ml-1 bg-green-500">{activeFiltersCount}</Badge>
-                  )}
-                </Button>
-              </SheetTrigger>
-              <SheetContent side="left" className="w-full sm:max-w-md overflow-y-auto">
-                <SheetHeader className="mb-6">
-                  <SheetTitle>Filters</SheetTitle>
-                  <SheetDescription>
-                    Filter products by category, price, and more.
-                  </SheetDescription>
-                </SheetHeader>
-                <FiltersComponent isMobile={true} />
-              </SheetContent>
-            </Sheet>
-          </div>
-          
-          {/* Desktop sidebar filters */}
-          <div className="hidden lg:block">
-            <FiltersComponent />
-          </div>
-          
-          {/* Product grid */}
-          <div className="lg:col-span-3">
-            {/* Results count */}
-            <div className="mb-4 flex items-center justify-between">
-              <div className="text-sm text-gray-600">
-                Showing {resultsCount} {resultsCount === 1 ? 'product' : 'products'}
-                {activeFiltersCount > 0 && ' with applied filters'}
-              </div>
-              
-              {activeFiltersCount > 0 && (
-                <Button 
-                  variant="ghost" 
-                  size="sm" 
-                  onClick={clearAllFilters} 
-                  className="text-xs text-red-600 hover:text-red-700 hover:bg-red-50"
-                >
-                  <X className="h-3 w-3 mr-1" />
-                  Clear Filters
-                </Button>
-              )}
-            </div>
-            
-            {isLoading ? (
-              <div className="flex justify-center items-center h-64 bg-white rounded-lg shadow-sm border border-gray-200">
-                <div className="flex flex-col items-center">
-                  <Loader2 className="h-8 w-8 animate-spin text-green-600 mb-2" />
-                  <p className="text-gray-500 text-sm">Loading products...</p>
-                </div>
-              </div>
-            ) : filteredProducts.length > 0 ? (
-              <ProductGrid products={filteredProducts} />
-            ) : (
-              <div className="flex flex-col items-center justify-center py-16 px-4 bg-white rounded-lg shadow-sm border border-gray-200">
-                <div className="text-center max-w-md">
-                  <h3 className="text-lg font-semibold text-gray-900 mb-2">No products found</h3>
-                  <p className="text-gray-600 mb-6">
-                    We couldn’t find any products matching your current filters. Try adjusting your search or clear filters to see all products.
-                  </p>
-                  <Button onClick={clearAllFilters}>
-                    Clear Filters
-                  </Button>
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-      </div>
-    </div>
-  );
+    <Suspense fallback={null}>
+      <ShopContent />
+    </Suspense>
+  )
 }
